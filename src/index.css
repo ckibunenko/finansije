@@ -1,0 +1,49 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color: #0f172a;
+  background: #eff6ff;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  background: #eff6ff;
+  transition: background-color 180ms ease, color 180ms ease;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+html.dark {
+  color-scheme: dark;
+}
+
+html.dark body {
+  color: #e2e8f0;
+  background:
+    radial-gradient(circle at top left, rgba(14, 165, 233, 0.16), transparent 26%),
+    radial-gradient(circle at top right, rgba(16, 185, 129, 0.1), transparent 24%),
+    linear-gradient(180deg, #020617 0%, #0f172a 42%, #020617 100%);
+}
+
+input[type='month']::-webkit-calendar-picker-indicator,
+input[type='date']::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+}
+
+html.dark input[type='month']::-webkit-calendar-picker-indicator,
+html.dark input[type='date']::-webkit-calendar-picker-indicator {
+  filter: invert(1) brightness(1.35);
+}
