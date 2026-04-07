@@ -45,6 +45,14 @@ const valueToneClasses = {
   success: 'text-success-700 dark:text-emerald-300',
   danger: 'text-danger-700 dark:text-rose-300',
 } as const;
+const savingsGoalStatusClasses = {
+  neutral:
+    'border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100',
+  success:
+    'border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-500/30 dark:bg-emerald-950/40 dark:text-emerald-100',
+  danger:
+    'border-rose-200 bg-rose-50 text-rose-900 dark:border-rose-500/30 dark:bg-rose-950/35 dark:text-rose-100',
+} as const;
 
 const formatCurrency = (value: number | null | undefined) => {
   if (value === null || value === undefined || Number.isNaN(value)) {
@@ -113,9 +121,8 @@ function App() {
   }, [activeMonthId]);
 
   useEffect(() => {
-    const existingEntry = budgetMap[activeMonthId]?.entries.find((entry) => entry.date === selectedDate);
-    setDraftAmount(existingEntry?.amount?.toString() ?? '');
-  }, [activeMonthId, budgetMap, selectedDate]);
+    setDraftAmount('');
+  }, [selectedDate]);
 
   useEffect(() => {
     if (!transferMessage) {
@@ -131,11 +138,19 @@ function App() {
 
   const [activeYear, activeMonthNumber] = activeMonthId.split('-').map(Number);
   const activeMonth = budgetMap[activeMonthId] ?? createMonthBudget(activeYear, activeMonthNumber);
+  const selectedEntry = activeMonth.entries.find((entry) => entry.date === selectedDate) ?? null;
+  const selectedDayAmount = selectedEntry?.amount ?? null;
   const daysInMonth = getDaysInMonth(activeMonth.year, activeMonth.month);
   const plannedDailyAmount =
     activeMonth.plannedMonthlyBudget > 0 ? activeMonth.plannedMonthlyBudget / daysInMonth : 0;
   const allowedMonthlySpend = Math.max(activeMonth.plannedMonthlyBudget - activeMonth.monthlySavingsGoal, 0);
-  const dailyLimitForGoal = allowedMonthlySpend > 0 ? allowedMonthlySpend / daysInMonth : 0;
+  const trimmedDraftAmount = draftAmount.trim();
+  const isIncrementDraft = trimmedDraftAmount.startsWith('+');
+  const rawDraftAmount = isIncrementDraft ? trimmedDraftAmount.slice(1).trim() : trimmedDraftAmount;
+  const parsedDraftAmount =
+    rawDraftAmount === '' || Number.isNaN(Number(rawDraftAmount)) || Number(rawDraftAmount) < 0
+      ? null
+      : Number(rawDraftAmount);
 
   const tableRows = useMemo(() => {
     let cumulativeDifference = 0;
@@ -152,7 +167,7 @@ function App() {
       }
 
       const runningAverage = runningTrackedDays > 0 ? runningTotal / runningTrackedDays : null;
-      const state =
+      const state: 'neutral' | 'saved' | 'overspent' =
         entry.amount === null
           ? 'neutral'
           : entry.amount <= plannedDailyAmount
@@ -167,7 +182,9 @@ function App() {
         planned: plannedDailyAmount,
         difference,
         runningAverage,
+        cumulativeSpent: runningTotal,
         cumulativeDifference,
+        targetCumulativeSpent: plannedDailyAmount * (index + 1),
         state,
       };
     });
@@ -183,9 +200,13 @@ function App() {
   const remainingBudget = activeMonth.plannedMonthlyBudget - totalSpent;
   const percentDaysBelowPlan = trackedDays > 0 ? (savedDays / trackedDays) * 100 : 0;
   const lastTrackedDay = trackedRows.length > 0 ? trackedRows[trackedRows.length - 1].dayNumber : 0;
-  const referenceDay =
-    activeMonthId === initialMonthId ? Math.min(today.getDate(), daysInMonth) : lastTrackedDay;
+  const currentCalendarDay = activeMonthId === initialMonthId ? Math.min(today.getDate(), daysInMonth) : 0;
+  const referenceDay = Math.max(currentCalendarDay, lastTrackedDay);
   const plannedToReference = plannedDailyAmount * referenceDay;
+  const remainingDaysForGoal = Math.max(daysInMonth - referenceDay, 0);
+  const remainingSpendForGoal = allowedMonthlySpend - totalSpent;
+  const dailyLimitForGoal =
+    remainingDaysForGoal > 0 ? remainingSpendForGoal / remainingDaysForGoal : remainingSpendForGoal;
   const maxExpense = trackedRows.length > 0 ? Math.max(...trackedRows.map((row) => row.amount ?? 0)) : null;
   const minExpense = trackedRows.length > 0 ? Math.min(...trackedRows.map((row) => row.amount ?? 0)) : null;
   const totalDifference = trackedRows.reduce((sum, row) => sum + (row.difference ?? 0), 0);
@@ -196,6 +217,45 @@ function App() {
       : expectedSavings >= activeMonth.monthlySavingsGoal;
   const projectionOverBudget =
     activeMonth.plannedMonthlyBudget > 0 ? projectedTotal > activeMonth.plannedMonthlyBudget : null;
+  const hasSavingsGoalContext =
+    activeMonth.plannedMonthlyBudget > 0 && activeMonth.monthlySavingsGoal > 0;
+  const savingsGoalStatus = !hasSavingsGoalContext ? 'neutral' : dailyLimitForGoal < 0 ? 'danger' : 'success';
+  const savingsGoalValue = hasSavingsGoalContext ? formatCurrency(dailyLimitForGoal) : '—';
+  const savingsGoalMessage =
+    savingsGoalStatus === 'neutral'
+      ? 'Unesite budžet i cilj štednje da bi se limit izračunao.'
+      : savingsGoalStatus === 'danger'
+        ? 'Cilj je trenutno probijen i potrebno je smanjenje troška.'
+        : dailyLimitForGoal === 0
+          ? 'Cilj je dostižan samo ako do kraja meseca nema dodatne potrošnje.'
+          : 'Toliki je prosečan dnevni maksimum do kraja meseca.';
+  const selectedDayLabel = formatDayLabel(selectedDate);
+  const selectedDayMessage =
+    selectedDayAmount === null
+      ? `Za ${selectedDayLabel} još nema unosa.`
+      : `Za ${selectedDayLabel} trenutno je upisano ${formatCurrency(selectedDayAmount)}.`;
+  const draftPreviewMessage =
+    parsedDraftAmount === null
+      ? null
+      : isIncrementDraft
+        ? `Sa ovim unosom ukupan trošak za ${selectedDayLabel} bi bio ${formatCurrency(
+            (selectedDayAmount ?? 0) + parsedDraftAmount,
+          )}.`
+        : selectedDayAmount !== parsedDraftAmount
+          ? `Ovim unosom postavljaš ukupan trošak za ${selectedDayLabel} na ${formatCurrency(parsedDraftAmount)}.`
+          : null;
+  const monthFocusMessage =
+    projectionOverBudget === null
+      ? 'Unesite budžet da bismo procenili tempo meseca.'
+      : projectionOverBudget
+        ? 'Trenutni tempo vodi iznad planiranog budžeta.'
+        : 'Trenutni tempo je i dalje unutar planiranog budžeta.';
+  const savingsGoalTrackMessage =
+    onSavingsGoalTrack === null
+      ? 'Dodajte cilj štednje da bismo pratili ostvarenje.'
+      : onSavingsGoalTrack
+        ? 'Sa ovim prosekom cilj je i dalje dostižan.'
+        : 'Sa ovim prosekom cilj trenutno nije dostižan.';
 
   const donutData = [
     {
@@ -225,18 +285,42 @@ function App() {
   };
 
   const handleAmountSubmit = () => {
-    const normalizedAmount = draftAmount.trim() === '' ? null : Number(draftAmount);
-
-    if (normalizedAmount !== null && Number.isNaN(normalizedAmount)) {
+    if (trimmedDraftAmount !== '' && parsedDraftAmount === null) {
+      setTransferTone('error');
+      setTransferMessage('Unesite broj ili dodatni trošak u formatu kao +1400.');
       return;
+    }
+
+    let nextAmount: number | null = null;
+
+    if (trimmedDraftAmount !== '') {
+      nextAmount = isIncrementDraft ? (selectedDayAmount ?? 0) + (parsedDraftAmount ?? 0) : parsedDraftAmount;
     }
 
     updateActiveMonth((current) => ({
       ...current,
-      entries: current.entries.map((entry) =>
-        entry.date === selectedDate ? { ...entry, amount: normalizedAmount } : entry,
-      ),
+      entries: current.entries.map((entry) => {
+        if (entry.date !== selectedDate) {
+          return entry;
+        }
+
+        if (trimmedDraftAmount === '') {
+          return { ...entry, amount: null };
+        }
+
+        return { ...entry, amount: nextAmount };
+      }),
     }));
+    setTransferTone('success');
+    setTransferMessage(
+      trimmedDraftAmount === ''
+        ? `Unos za ${selectedDayLabel} je obrisan.`
+        : isIncrementDraft
+          ? `Dodat je trošak od ${formatCurrency(parsedDraftAmount)}. Novi total za ${selectedDayLabel} je ${formatCurrency(nextAmount)}.`
+          : selectedDayAmount === null
+            ? `Sačuvan je trošak od ${formatCurrency(nextAmount)} za ${selectedDayLabel}.`
+            : `Ukupan trošak za ${selectedDayLabel} je ažuriran na ${formatCurrency(nextAmount)}.`
+    );
     setDraftAmount('');
   };
 
@@ -372,9 +456,9 @@ function App() {
         <section className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
           <div className="rounded-[28px] border border-white/60 bg-white/90 p-6 shadow-soft dark:border-slate-700/70 dark:bg-slate-900/80 dark:shadow-[0_18px_50px_rgba(2,6,23,0.45)]">
             <div className="mb-5">
-              <h2 className="text-xl font-semibold text-ink dark:text-white">Kontrolni panel</h2>
+              <h2 className="text-xl font-semibold text-ink dark:text-white">Dnevni unos</h2>
               <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                Ažuriranje unosa menja tabelu, kartice i grafikone bez osvežavanja stranice.
+                Sve bitno za izabrani datum je ovde: trenutni total, plan i unos novog troška.
               </p>
             </div>
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -426,26 +510,51 @@ function App() {
               <label className="space-y-2">
                 <span className="text-sm font-medium text-slate-600 dark:text-slate-300">Dnevni trošak</span>
                 <input
-                  type="number"
-                  min="0"
-                  step="1"
+                  type="text"
+                  inputMode="numeric"
                   value={draftAmount}
                   onChange={(event) => setDraftAmount(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      handleAmountSubmit();
+                    }
+                  }}
                   className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-brand-400 focus:bg-white dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:focus:border-sky-400 dark:focus:bg-slate-800"
-                  placeholder="npr. 5400"
+                  placeholder="npr. 5400 ili +1400"
                 />
+                <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">
+                  Unesi puni iznos ili dodaj novi trošak za isti dan preko formata kao `+1400`.
+                </p>
+                <p className="text-xs leading-5 text-slate-600 dark:text-slate-300">{selectedDayMessage}</p>
+                {draftPreviewMessage ? (
+                  <p className="text-xs leading-5 text-brand-700 dark:text-sky-300">{draftPreviewMessage}</p>
+                ) : null}
               </label>
             </div>
-            <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="mt-5 grid gap-3 lg:grid-cols-[minmax(0,0.65fr)_minmax(0,1.35fr)_auto] lg:items-stretch">
               <div className="rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-                Dnevni plan: <span className="font-semibold text-ink dark:text-white">{formatCurrency(plannedDailyAmount)}</span>
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
+                  Dnevni plan
+                </p>
+                <p className="mt-2 text-2xl font-semibold text-ink dark:text-white">
+                  {formatCurrency(plannedDailyAmount)}
+                </p>
+              </div>
+              <div
+                className={`rounded-2xl border px-4 py-4 transition-colors ${savingsGoalStatusClasses[savingsGoalStatus]}`}
+              >
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] opacity-80">
+                  Dnevno za cilj štednje
+                </p>
+                <p className="mt-2 text-3xl font-semibold tracking-tight">{savingsGoalValue}</p>
+                <p className="mt-2 text-sm leading-6 opacity-90">{savingsGoalMessage}</p>
               </div>
               <button
                 type="button"
                 onClick={handleAmountSubmit}
-                className="rounded-2xl bg-ink px-5 py-3 text-sm font-semibold text-white transition hover:bg-brand-900"
+                className="border-2 border-amber-200/80 bg-gradient-to-br from-[#ffe27a] via-[#f5c116] to-[#c98600] px-6 py-3.5 text-sm font-black uppercase tracking-[0.18em] text-[#4b2a00] shadow-[0_14px_28px_rgba(201,134,0,0.38)] transition hover:-translate-y-0.5 hover:from-[#ffea8f] hover:via-[#ffd447] hover:to-[#d99810] hover:shadow-[0_18px_34px_rgba(201,134,0,0.46)] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-amber-200/60 active:translate-y-0 [border-radius:30px_10px_30px_10px] lg:self-center"
               >
-                Dodaj / sačuvaj unos
+                Sačuvaj unos
               </button>
             </div>
           </div>
@@ -453,33 +562,25 @@ function App() {
           <div className="rounded-[28px] border border-brand-100 bg-gradient-to-br from-brand-900 via-ink to-brand-700 p-6 text-white shadow-soft dark:border-sky-400/20 dark:from-slate-900 dark:via-slate-900 dark:to-sky-950">
             <div className="flex h-full flex-col justify-between gap-4">
               <div>
-                <p className="text-sm uppercase tracking-[0.22em] text-brand-100">Brzi status</p>
-                <h2 className="mt-2 text-2xl font-semibold">Da li plan drži mesec pod kontrolom?</h2>
+                <p className="text-sm uppercase tracking-[0.22em] text-brand-100">Fokus sada</p>
+                <h2 className="mt-2 text-2xl font-semibold">Šta je najbitnije za {selectedDayLabel}?</h2>
+              </div>
+              <div className="rounded-2xl bg-white/10 p-4">
+                <p className="text-sm text-brand-100">Trenutno upisano za izabrani dan</p>
+                <p className="mt-2 text-3xl font-semibold">{formatCurrency(selectedDayAmount)}</p>
+                <p className="mt-2 text-sm text-brand-50">{selectedDayMessage}</p>
+                {draftPreviewMessage ? <p className="mt-2 text-sm text-sky-100">{draftPreviewMessage}</p> : null}
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="rounded-2xl bg-white/10 p-4">
-                  <p className="text-sm text-brand-100">Projekcija do kraja meseca</p>
-                  <p className="mt-2 text-2xl font-semibold">{formatCurrency(projectedTotal)}</p>
-                  <p className="mt-2 text-sm text-brand-50">
-                    {projectionOverBudget === null
-                      ? 'Unesite budžet da bismo uporedili projekciju.'
-                      : projectionOverBudget
-                        ? 'Trenutni tempo vodi iznad budžeta.'
-                        : 'Tempo troškova je i dalje unutar budžeta.'}
-                  </p>
+                  <p className="text-sm text-brand-100">Preostali budžet</p>
+                  <p className="mt-2 text-2xl font-semibold">{formatCurrency(remainingBudget)}</p>
+                  <p className="mt-2 text-sm text-brand-50">{monthFocusMessage}</p>
                 </div>
                 <div className="rounded-2xl bg-white/10 p-4">
                   <p className="text-sm text-brand-100">Cilj štednje</p>
-                  <p className="mt-2 text-2xl font-semibold">
-                    {formatCurrency(activeMonth.monthlySavingsGoal)}
-                  </p>
-                  <p className="mt-2 text-sm text-brand-50">
-                    {onSavingsGoalTrack === null
-                      ? 'Dodajte cilj štednje da bismo pratili ostvarenje.'
-                      : onSavingsGoalTrack
-                        ? 'Sa trenutnim prosekom cilj je dostižan.'
-                        : 'Sa trenutnim prosekom cilj nije dostižan.'}
-                  </p>
+                  <p className="mt-2 text-2xl font-semibold">{formatCurrency(activeMonth.monthlySavingsGoal)}</p>
+                  <p className="mt-2 text-sm text-brand-50">{savingsGoalTrackMessage}</p>
                 </div>
               </div>
             </div>
@@ -495,12 +596,6 @@ function App() {
               detail: `${trackedDays} dana sa unosom`,
             },
             {
-              label: 'Ukupno planirano za mesec',
-              value: formatCurrency(activeMonth.plannedMonthlyBudget),
-              tone: valueToneClasses.neutral,
-              detail: `${daysInMonth} dana u mesecu`,
-            },
-            {
               label: 'Ukupna ušteda / prekoračenje',
               value: formatCurrency(totalDifference),
               tone: totalDifference >= 0 ? valueToneClasses.success : valueToneClasses.danger,
@@ -513,16 +608,16 @@ function App() {
               detail: 'Na osnovu unetih dana',
             },
             {
+              label: 'Dani sa unosom',
+              value: `${trackedDays}/${daysInMonth}`,
+              tone: valueToneClasses.neutral,
+              detail: `${savedDays} dana uštede / ${overspentDays} dana prekoračenja`,
+            },
+            {
               label: 'Preostali budžet',
               value: formatCurrency(remainingBudget),
               tone: remainingBudget >= 0 ? valueToneClasses.success : valueToneClasses.danger,
               detail: remainingBudget >= 0 ? 'Ima prostora do kraja meseca' : 'Budžet je probijen',
-            },
-            {
-              label: '% dana ispod plana',
-              value: `${percent.format(percentDaysBelowPlan)}%`,
-              tone: valueToneClasses.neutral,
-              detail: `${savedDays} dana uštede / ${overspentDays} dana prekoračenja`,
             },
           ].map((card) => (
             <article
@@ -539,73 +634,79 @@ function App() {
         <section className="grid gap-6 2xl:grid-cols-[1.4fr_1fr]">
           <div className="rounded-[28px] border border-white/60 bg-white/90 p-6 shadow-soft dark:border-slate-700/70 dark:bg-slate-900/80 dark:shadow-[0_18px_50px_rgba(2,6,23,0.45)]">
             <div className="mb-4">
-              <h2 className="text-xl font-semibold text-ink dark:text-white">Glavna tabela</h2>
+              <h2 className="text-xl font-semibold text-ink dark:text-white">Uneti dani</h2>
               <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                Zelena polja označavaju uštedu, crvena prekoračenje, a neutralna polja dane bez
-                unosa.
+                Prikazani su samo dani za koje postoji zabeležen trošak.
               </p>
             </div>
-            <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-700">
-              <table className="min-w-full border-collapse text-sm">
-                <thead className="bg-slate-100 text-left text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-                  <tr>
-                    <th className="px-4 py-3 font-semibold">Datum</th>
-                    <th className="px-4 py-3 font-semibold">Iznos (din)</th>
-                    <th className="px-4 py-3 font-semibold">Planirano (din)</th>
-                    <th className="px-4 py-3 font-semibold">Razlika (din)</th>
-                    <th className="px-4 py-3 font-semibold">Dnevni prosek (din)</th>
-                    <th className="px-4 py-3 font-semibold">Kumulativna ušteda (din)</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {tableRows.map((row) => {
-                    const rowTone =
-                      row.state === 'saved'
-                        ? 'bg-success-50/70 dark:bg-emerald-950/35'
-                        : row.state === 'overspent'
-                          ? 'bg-danger-50/70 dark:bg-rose-950/30'
-                          : 'bg-white dark:bg-slate-900';
+            {trackedRows.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-6 py-10 text-center dark:border-slate-700 dark:bg-slate-800/80">
+                <p className="text-sm font-medium text-slate-700 dark:text-slate-200">
+                  Još nema zabeleženih troškova za ovaj mesec.
+                </p>
+                <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+                  Dodaj prvi unos iznad da bi se ovde pojavila istorija troškova.
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-700">
+                <table className="min-w-full border-collapse text-sm">
+                  <thead className="bg-slate-100 text-left text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                    <tr>
+                      <th className="px-4 py-3 font-semibold">Datum</th>
+                      <th className="px-4 py-3 font-semibold">Iznos (din)</th>
+                      <th className="px-4 py-3 font-semibold">Planirano (din)</th>
+                      <th className="px-4 py-3 font-semibold">Razlika (din)</th>
+                      <th className="px-4 py-3 font-semibold">Dnevni prosek (din)</th>
+                      <th className="px-4 py-3 font-semibold">Kumulativna ušteda (din)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {trackedRows.map((row) => {
+                      const rowTone =
+                        row.state === 'saved'
+                          ? 'bg-success-50/70 dark:bg-emerald-950/35'
+                          : 'bg-danger-50/70 dark:bg-rose-950/30';
 
-                    return (
-                      <tr key={row.id} className={`border-t border-slate-100 dark:border-slate-800 ${rowTone}`}>
-                        <td className="whitespace-nowrap px-4 py-3 font-medium text-slate-700 dark:text-slate-200">
-                          {row.dayLabel}
-                        </td>
-                        <td className="whitespace-nowrap px-4 py-3 font-semibold text-brand-700 dark:text-sky-300">
-                          {formatCurrency(row.amount)}
-                        </td>
-                        <td className="whitespace-nowrap px-4 py-3 text-slate-600 dark:text-slate-300">
-                          {formatCurrency(row.planned)}
-                        </td>
-                        <td
-                          className={`whitespace-nowrap px-4 py-3 font-medium ${
-                            row.difference === null
-                              ? 'text-slate-400 dark:text-slate-500'
-                              : row.difference >= 0
+                      return (
+                        <tr key={row.id} className={`border-t border-slate-100 dark:border-slate-800 ${rowTone}`}>
+                          <td className="whitespace-nowrap px-4 py-3 font-medium text-slate-700 dark:text-slate-200">
+                            {row.dayLabel}
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-3 font-semibold text-brand-700 dark:text-sky-300">
+                            {formatCurrency(row.amount)}
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-3 text-slate-600 dark:text-slate-300">
+                            {formatCurrency(row.planned)}
+                          </td>
+                          <td
+                            className={`whitespace-nowrap px-4 py-3 font-medium ${
+                              row.difference !== null && row.difference >= 0
                                 ? 'text-success-700 dark:text-emerald-300'
                                 : 'text-danger-700 dark:text-rose-300'
-                          }`}
-                        >
-                          {formatCurrency(row.difference)}
-                        </td>
-                        <td className="whitespace-nowrap px-4 py-3 text-slate-600 dark:text-slate-300">
-                          {formatCurrency(row.runningAverage)}
-                        </td>
-                        <td
-                          className={`whitespace-nowrap px-4 py-3 font-medium ${
-                            row.cumulativeDifference >= 0
-                              ? 'text-success-700 dark:text-emerald-300'
-                              : 'text-danger-700 dark:text-rose-300'
-                          }`}
-                        >
-                          {formatCurrency(row.cumulativeDifference)}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                            }`}
+                          >
+                            {formatCurrency(row.difference)}
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-3 text-slate-600 dark:text-slate-300">
+                            {formatCurrency(row.runningAverage)}
+                          </td>
+                          <td
+                            className={`whitespace-nowrap px-4 py-3 font-medium ${
+                              row.cumulativeDifference >= 0
+                                ? 'text-success-700 dark:text-emerald-300'
+                                : 'text-danger-700 dark:text-rose-300'
+                            }`}
+                          >
+                            {formatCurrency(row.cumulativeDifference)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
 
           <aside className="rounded-[28px] border border-white/60 bg-white/90 p-6 shadow-soft dark:border-slate-700/70 dark:bg-slate-900/80 dark:shadow-[0_18px_50px_rgba(2,6,23,0.45)]">
@@ -624,7 +725,7 @@ function App() {
                 ['Prosečna dnevna potrošnja', formatCurrency(averageSpent)],
                 ['Projekcija do kraja meseca', formatCurrency(projectedTotal)],
                 ['Preostali budžet', formatCurrency(remainingBudget)],
-                ['Dnevni limit za cilj štednje', formatCurrency(dailyLimitForGoal)],
+                ['Preostali dnevni limit za cilj štednje', formatCurrency(dailyLimitForGoal)],
                 ['Dana praćeno', String(trackedDays)],
                 ['Dana prekoračeno', String(overspentDays)],
                 ['Dana ušteđeno', String(savedDays)],
@@ -654,10 +755,12 @@ function App() {
           >
             <ChartsPanel
               activeMonthBudget={activeMonth.plannedMonthlyBudget}
+              cumulativeActualCutoffDay={referenceDay}
               donutData={donutData}
               formatCurrency={formatCurrency}
               theme={theme}
-              tableRows={tableRows}
+              tableRows={trackedRows}
+              allRows={tableRows}
             />
           </Suspense>
         </section>
