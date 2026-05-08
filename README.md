@@ -1,18 +1,18 @@
-# Finansije prodavnica
+# Store Finance Tracker
 
-Aplikacija za pracenje mesecnog budzeta prodavnice. Omogucava unos dnevnih troskova,
-pracenje planiranog budzeta, cilj stednje, grafikone potrosnje i import/export
-podataka kroz JSON fajl.
+A web app for tracking a store's monthly budget. It helps you enter daily
+expenses, compare spending against the planned budget, track a monthly savings
+goal, review charts, and import/export data as a JSON file.
 
-## Preduslovi
+## Requirements
 
-Pre pokretanja proverite da imate instalirano:
+Before you start, make sure you have:
 
 - Git
-- Node.js 20 ili noviji
+- Node.js 20 or newer
 - npm
 
-Provera verzija:
+Check your installed versions:
 
 ```bash
 node -v
@@ -20,124 +20,124 @@ npm -v
 git --version
 ```
 
-Ako Node nije instaliran, preporuka je Node.js 20 LTS ili novija verzija.
+If Node.js is not installed, use Node.js 20 LTS or a newer version.
 
-## Preuzimanje projekta
+## Download The Project
 
-Klonirajte repo:
+Clone the repository:
 
 ```bash
 git clone https://github.com/ckibunenko/finansije.git
 ```
 
-Udjite u folder projekta:
+Open the project folder:
 
 ```bash
 cd finansije
 ```
 
-## Instalacija
+## Install Dependencies
 
-Instalirajte dependency-je:
+Install the project dependencies:
 
 ```bash
 npm install
 ```
 
-Ako zelite instalaciju tacno po `package-lock.json` fajlu, koristite:
+For a clean install that follows `package-lock.json` exactly, use:
 
 ```bash
 npm ci
 ```
 
-`npm ci` je dobar izbor za cistu instalaciju ili CI/CD okruzenje.
+`npm ci` is a good choice for clean local setups and CI/CD environments.
 
-## Pokretanje u development modu
+## Run The App Locally
 
-Pokrenite lokalni dev server:
+Start the development server:
 
 ```bash
 npm run dev
 ```
 
-Terminal ce ispisati lokalni URL. Najcesce je:
+The terminal will print a local URL. It is usually:
 
 ```text
 http://localhost:5173/
 ```
 
-Otvorite taj URL u browseru.
+Open that URL in your browser.
 
-## Kako se koristi aplikacija
+## How To Use The App
 
-1. Izaberite mesec preko polja za mesec ili dugmadi `Prethodni mesec` i `Sledeci mesec`.
-2. Unesite `Planirani mesecni budzet`.
-3. Po zelji unesite `Mesecni cilj za stednju`.
-4. Izaberite datum unosa.
-5. U polje `Dnevni trosak` unesite iznos za taj dan.
-6. Kliknite `Sacuvaj unos`.
+1. Select a month using the month picker or the previous/next month buttons.
+2. Enter the planned monthly budget.
+3. Optionally enter a monthly savings goal.
+4. Select the date you want to update.
+5. Enter the daily expense.
+6. Click the save button.
 
-Primeri dnevnog unosa:
+Daily expense examples:
 
 ```text
 5400
 ```
 
-postavlja ukupni trosak za izabrani dan na 5400 RSD.
+sets the total expense for the selected day to 5400 RSD.
 
 ```text
 +1400
 ```
 
-dodaje 1400 RSD na vec postojeci trosak za izabrani dan.
+adds 1400 RSD to the existing expense for the selected day.
 
-Ako ostavite polje za dnevni trosak prazno i kliknete `Sacuvaj unos`, unos za taj
-dan se brise.
+If you leave the daily expense field empty and click the save button, the entry
+for that day is deleted.
 
-## Podaci
+## Data Storage
 
-Podaci se cuvaju lokalno u browseru, u `localStorage`. To znaci:
+Data is saved locally in the browser using `localStorage`. This means:
 
-- podaci ostaju sacuvani u istom browseru na istom racunaru
-- podaci se ne salju na server
-- drugi browser ili drugi racunar nece automatski imati iste podatke
+- data stays saved in the same browser on the same computer
+- data is not sent to a server
+- another browser or another computer will not automatically have the same data
 
-Za prenos podataka koristite:
+To move or back up data, use:
 
-- `Export JSON` za preuzimanje backup fajla
-- `Import JSON` za ucitavanje ranije izvezenog fajla
+- `Export JSON` to download a backup file
+- `Import JSON` to load a previously exported file
 
-## Production build
+## Production Build
 
-Za proveru production build-a:
+Create a production build:
 
 ```bash
 npm run build
 ```
 
-Ako build prodje, lokalno ga mozete pregledati komandom:
+Preview the production build locally:
 
 ```bash
 npm run preview
 ```
 
-Terminal ce ispisati URL za pregled build-a.
+The terminal will print the preview URL.
 
-## Najcesci problemi
+## Common Issues
 
-Ako `npm install` ili `npm run dev` ne radi, prvo proverite Node verziju:
+If `npm install` or `npm run dev` does not work, check your Node.js version:
 
 ```bash
 node -v
 ```
 
-Koristite Node 20 ili noviji.
+Use Node.js 20 or newer.
 
-Ako port `5173` nije slobodan, Vite ce ponuditi drugi port. U tom slucaju otvorite
-URL koji terminal ispise.
+If port `5173` is already in use, Vite will offer another port. Open the URL
+printed in the terminal.
 
-Ako zelite potpuno novu instalaciju dependency-ja, obrisite lokalni `node_modules`
-folder i pokrenite:
+If you want a completely fresh dependency install, delete your local
+`node_modules` folder and run:
 
 ```bash
 npm install
