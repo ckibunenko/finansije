@@ -1,3 +1,11 @@
 node_modules
 dist
 *.tsbuildinfo
+.wrangler
+.dev.vars*
+.env*
+!.env.example
+secrets.local.json
+playwright-report
+test-results
+.rtk

@@ -1,19 +1,20 @@
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import {
   createMonthBudget,
-  ensureMonthBudget,
   getDaysInMonth,
   getMonthId,
-  loadBudgetMap,
-  parseImportedBudgetMap,
-  persistBudgetMap,
 } from './lib/month-budget';
-import type { MonthBudgetMap } from './types';
+import { belgradeToday, parseAmount, validDate, validMonth } from '../shared/budget';
+import { api, useBudget } from './lib/api';
+import Login from './components/Login';
+import MonthSettings from './components/MonthSettings';
+import Purchases from './components/Purchases';
+import ImportPreview, { inspectImport } from './components/ImportPreview';
 
 const currency = new Intl.NumberFormat('sr-Latn-RS', {
   style: 'currency',
   currency: 'RSD',
-  maximumFractionDigits: 0,
+  maximumFractionDigits: 2,
 });
 
 const percent = new Intl.NumberFormat('sr-Latn-RS', {
@@ -35,8 +36,6 @@ const MONTH_NAMES_LATIN = [
   'decembar',
 ] as const;
 
-const today = new Date();
-const initialMonthId = getMonthId(today.getFullYear(), today.getMonth() + 1);
 const ChartsPanel = lazy(() => import('./components/ChartsPanel'));
 const THEME_STORAGE_KEY = 'finansije-prodavnica-theme';
 const valueToneClasses = {
@@ -55,7 +54,7 @@ const savingsGoalStatusClasses = {
 } as const;
 
 const formatCurrency = (value: number | null | undefined) => {
-  if (value === null || value === undefined || Number.isNaN(value)) {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
     return '—';
   }
 
@@ -79,49 +78,45 @@ const shiftMonth = (monthId: string, offset: number) => {
 };
 
 const getDefaultSelectedDate = (monthId: string) => {
-  if (monthId === initialMonthId) {
-    return `${monthId}-${String(today.getDate()).padStart(2, '0')}`;
-  }
-
-  return `${monthId}-01`;
+  const today = belgradeToday();
+  return monthId === today.slice(0, 7) ? today : monthId + '-01';
 };
 
 function App() {
-  const [budgetMap, setBudgetMap] = useState<MonthBudgetMap>(() =>
-    ensureMonthBudget(loadBudgetMap(), today.getFullYear(), today.getMonth() + 1),
-  );
+  const budget = useBudget();
+  const budgetMap = budget.data?.budgetMap ?? {};
+  const today = budget.data?.today ?? belgradeToday();
+  const initialMonthId = today.slice(0, 7);
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     if (typeof window === 'undefined') {
       return 'light';
     }
 
-    return window.localStorage.getItem(THEME_STORAGE_KEY) === 'dark' ? 'dark' : 'light';
+    try { return window.localStorage.getItem(THEME_STORAGE_KEY) === 'dark' ? 'dark' : 'light'; } catch { return 'light'; }
   });
   const [activeMonthId, setActiveMonthId] = useState(initialMonthId);
   const [selectedDate, setSelectedDate] = useState(getDefaultSelectedDate(initialMonthId));
   const [draftAmount, setDraftAmount] = useState('');
+  const [draftDescription, setDraftDescription] = useState('');
+  const [importPreview, setImportPreview] = useState<unknown>(null);
+  const [disconnectConfirm, setDisconnectConfirm] = useState(false);
+  const pendingPurchase = useRef<{ signature: string; requestId: string } | null>(null);
   const [transferMessage, setTransferMessage] = useState<string | null>(null);
   const [transferTone, setTransferTone] = useState<'success' | 'error'>('success');
   const importInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    persistBudgetMap(budgetMap);
-  }, [budgetMap]);
-
-  useEffect(() => {
     document.documentElement.classList.toggle('dark', theme === 'dark');
-    window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+    try { window.localStorage.setItem(THEME_STORAGE_KEY, theme); } catch { /* Optional preference. */ }
   }, [theme]);
 
   useEffect(() => {
-    const [year, month] = activeMonthId.split('-').map(Number);
-    setBudgetMap((current) => ensureMonthBudget(current, year, month));
     setSelectedDate(getDefaultSelectedDate(activeMonthId));
     setDraftAmount('');
   }, [activeMonthId]);
 
   useEffect(() => {
-    setDraftAmount('');
+    setDraftAmount(''); setDraftDescription('');
   }, [selectedDate]);
 
   useEffect(() => {
@@ -145,12 +140,7 @@ function App() {
     activeMonth.plannedMonthlyBudget > 0 ? activeMonth.plannedMonthlyBudget / daysInMonth : 0;
   const allowedMonthlySpend = Math.max(activeMonth.plannedMonthlyBudget - activeMonth.monthlySavingsGoal, 0);
   const trimmedDraftAmount = draftAmount.trim();
-  const isIncrementDraft = trimmedDraftAmount.startsWith('+');
-  const rawDraftAmount = isIncrementDraft ? trimmedDraftAmount.slice(1).trim() : trimmedDraftAmount;
-  const parsedDraftAmount =
-    rawDraftAmount === '' || Number.isNaN(Number(rawDraftAmount)) || Number(rawDraftAmount) < 0
-      ? null
-      : Number(rawDraftAmount);
+  const parsedDraftAmount = parseAmount(trimmedDraftAmount);
 
   const tableRows = useMemo(() => {
     let cumulativeDifference = 0;
@@ -200,10 +190,10 @@ function App() {
   const remainingBudget = activeMonth.plannedMonthlyBudget - totalSpent;
   const percentDaysBelowPlan = trackedDays > 0 ? (savedDays / trackedDays) * 100 : 0;
   const lastTrackedDay = trackedRows.length > 0 ? trackedRows[trackedRows.length - 1].dayNumber : 0;
-  const currentCalendarDay = activeMonthId === initialMonthId ? Math.min(today.getDate(), daysInMonth) : 0;
+  const currentCalendarDay = activeMonthId < initialMonthId ? daysInMonth : activeMonthId === initialMonthId ? Math.min(Number(today.slice(8)), daysInMonth) : 0;
   const referenceDay = Math.max(currentCalendarDay, lastTrackedDay);
   const plannedToReference = plannedDailyAmount * referenceDay;
-  const remainingDaysForGoal = Math.max(daysInMonth - referenceDay, 0);
+  const remainingDaysForGoal = activeMonthId < initialMonthId ? 0 : activeMonthId === initialMonthId ? daysInMonth - Number(today.slice(8)) + 1 : daysInMonth;
   const remainingSpendForGoal = allowedMonthlySpend - totalSpent;
   const dailyLimitForGoal =
     remainingDaysForGoal > 0 ? remainingSpendForGoal / remainingDaysForGoal : remainingSpendForGoal;
@@ -220,30 +210,24 @@ function App() {
   const hasSavingsGoalContext =
     activeMonth.plannedMonthlyBudget > 0 && activeMonth.monthlySavingsGoal > 0;
   const savingsGoalStatus = !hasSavingsGoalContext ? 'neutral' : dailyLimitForGoal < 0 ? 'danger' : 'success';
-  const savingsGoalValue = hasSavingsGoalContext ? formatCurrency(dailyLimitForGoal) : '—';
+  const savingsGoalValue = hasSavingsGoalContext && remainingDaysForGoal > 0 ? formatCurrency(dailyLimitForGoal) : '—';
   const savingsGoalMessage =
     savingsGoalStatus === 'neutral'
       ? 'Unesite budžet i cilj štednje da bi se limit izračunao.'
+      : remainingDaysForGoal === 0
+        ? 'Mesec je završen; dnevni limit više nije primenljiv.'
       : savingsGoalStatus === 'danger'
         ? 'Cilj je trenutno probijen i potrebno je smanjenje troška.'
         : dailyLimitForGoal === 0
           ? 'Cilj je dostižan samo ako do kraja meseca nema dodatne potrošnje.'
-          : 'Toliki je prosečan dnevni maksimum do kraja meseca.';
+          : 'Prosečan preostali dnevni iznos, uključujući ostatak današnjeg dana.';
   const selectedDayLabel = formatDayLabel(selectedDate);
   const selectedDayMessage =
     selectedDayAmount === null
       ? `Za ${selectedDayLabel} još nema unosa.`
       : `Za ${selectedDayLabel} trenutno je upisano ${formatCurrency(selectedDayAmount)}.`;
-  const draftPreviewMessage =
-    parsedDraftAmount === null
-      ? null
-      : isIncrementDraft
-        ? `Sa ovim unosom ukupan trošak za ${selectedDayLabel} bi bio ${formatCurrency(
-            (selectedDayAmount ?? 0) + parsedDraftAmount,
-          )}.`
-        : selectedDayAmount !== parsedDraftAmount
-          ? `Ovim unosom postavljaš ukupan trošak za ${selectedDayLabel} na ${formatCurrency(parsedDraftAmount)}.`
-          : null;
+  const draftPreviewMessage = parsedDraftAmount === null ? null :
+    'Sa ovom kupovinom ukupan trošak za ' + selectedDayLabel + ' bi bio ' + formatCurrency((selectedDayAmount ?? 0) + parsedDraftAmount) + '.';
   const monthFocusMessage =
     projectionOverBudget === null
       ? 'Unesite budžet da bismo procenili tempo meseca.'
@@ -275,57 +259,23 @@ function App() {
     },
   ].filter((segment) => segment.value > 0);
 
-  const updateActiveMonth = (
-    updater: (current: NonNullable<MonthBudgetMap[string]>) => NonNullable<MonthBudgetMap[string]>,
-  ) => {
-    setBudgetMap((current) => ({
-      ...current,
-      [activeMonthId]: updater(current[activeMonthId] ?? activeMonth),
-    }));
+  const handleAmountSubmit = async () => {
+    if (budget.busy) return;
+    if (parsedDraftAmount === null || !validDate(selectedDate) || !selectedDate.startsWith(activeMonthId)) {
+      setTransferTone('error'); setTransferMessage('Unesite iznos kupovine i ispravan datum. Prazno polje ne briše kupovine.'); return;
+    }
+    const payload = { date: selectedDate, amount: parsedDraftAmount, description: draftDescription.trim() };
+    const signature = JSON.stringify(payload);
+    if (pendingPurchase.current?.signature !== signature) pendingPurchase.current = { signature, requestId: crypto.randomUUID() };
+    if (await budget.mutate('/api/expenses', 'POST', { ...payload, requestId: pendingPurchase.current.requestId }, 'Sačuvana je kupovina od ' + formatCurrency(parsedDraftAmount) + ' za ' + selectedDayLabel + '.')) {
+      pendingPurchase.current = null; setDraftAmount(''); setDraftDescription(''); setTransferMessage(null);
+    }
   };
 
-  const handleAmountSubmit = () => {
-    if (trimmedDraftAmount !== '' && parsedDraftAmount === null) {
-      setTransferTone('error');
-      setTransferMessage('Unesite broj ili dodatni trošak u formatu kao +1400.');
-      return;
-    }
-
-    let nextAmount: number | null = null;
-
-    if (trimmedDraftAmount !== '') {
-      nextAmount = isIncrementDraft ? (selectedDayAmount ?? 0) + (parsedDraftAmount ?? 0) : parsedDraftAmount;
-    }
-
-    updateActiveMonth((current) => ({
-      ...current,
-      entries: current.entries.map((entry) => {
-        if (entry.date !== selectedDate) {
-          return entry;
-        }
-
-        if (trimmedDraftAmount === '') {
-          return { ...entry, amount: null };
-        }
-
-        return { ...entry, amount: nextAmount };
-      }),
-    }));
-    setTransferTone('success');
-    setTransferMessage(
-      trimmedDraftAmount === ''
-        ? `Unos za ${selectedDayLabel} je obrisan.`
-        : isIncrementDraft
-          ? `Dodat je trošak od ${formatCurrency(parsedDraftAmount)}. Novi total za ${selectedDayLabel} je ${formatCurrency(nextAmount)}.`
-          : selectedDayAmount === null
-            ? `Sačuvan je trošak od ${formatCurrency(nextAmount)} za ${selectedDayLabel}.`
-            : `Ukupan trošak za ${selectedDayLabel} je ažuriran na ${formatCurrency(nextAmount)}.`
-    );
-    setDraftAmount('');
-  };
-
-  const handleExportJson = () => {
-    const payload = JSON.stringify(budgetMap, null, 2);
+  const handleExportJson = async () => {
+    let payload: string;
+    try { payload = JSON.stringify(await api('/api/export'), null, 2); }
+    catch (error) { setTransferTone('error'); setTransferMessage((error as Error).message); return; }
     const blob = new Blob([payload], { type: 'application/json' });
     const url = window.URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -334,7 +284,7 @@ function App() {
     link.href = url;
     link.download = `finansije-prodavnica-${exportDate}.json`;
     link.click();
-    window.URL.revokeObjectURL(url);
+    window.setTimeout(() => window.URL.revokeObjectURL(url), 1000);
     setTransferTone('success');
     setTransferMessage('Podaci su izvezeni u JSON fajl.');
   };
@@ -351,16 +301,11 @@ function App() {
     }
 
     try {
+      if (file.size > 1_000_000) throw new Error('JSON fajl može imati najviše 1 MB.');
       const fileContent = await file.text();
       const parsedJson = JSON.parse(fileContent) as unknown;
-      const importedMap = parseImportedBudgetMap(parsedJson);
-
-      setBudgetMap((current) => ({
-        ...current,
-        ...importedMap,
-      }));
-      setTransferTone('success');
-      setTransferMessage('JSON je uspešno uvezen u lokalne podatke.');
+      inspectImport(parsedJson);
+      setImportPreview(parsedJson);
     } catch (error) {
       setTransferTone('error');
       setTransferMessage(error instanceof Error ? error.message : 'Import nije uspeo.');
@@ -369,9 +314,19 @@ function App() {
     }
   };
 
+  if (budget.auth === 'required') return <Login onLogin={budget.reload} />;
+  if (!budget.data) return <main className="grid min-h-screen place-items-center p-6"><div className="max-w-md text-center"><h1 className="text-2xl font-semibold dark:text-white">Naše finansije</h1><p role="status" className="mt-4 text-slate-500">{budget.message || 'Učitavanje zajedničke evidencije…'}</p>{budget.failed && <button className="primary mt-5" onClick={() => void budget.reload().catch(() => {})}>Pokušaj ponovo</button>}</div></main>;
+
   return (
     <div className="min-h-screen bg-halo px-4 py-6 text-ink transition-colors dark:bg-none dark:text-slate-100 sm:px-6 lg:px-8">
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-white/90 px-4 py-3 text-sm dark:bg-slate-900 dark:text-slate-200">
+          <div role={budget.failed ? 'alert' : 'status'} aria-live="polite" className={budget.failed ? 'text-rose-700 dark:text-rose-300' : ''}>
+            {budget.message || 'Zajednička evidencija'}
+            {budget.lastSynced && <span className="ml-2 text-xs text-slate-500">Osveženo {budget.lastSynced.toLocaleTimeString('sr-Latn-RS', { hour: '2-digit', minute: '2-digit' })}</span>}
+          </div>
+          <div className="flex gap-2"><button className="secondary" disabled={budget.busy} onClick={() => void budget.reload().catch(() => {})}>Osveži</button><button className="secondary" disabled={budget.busy} onClick={() => void budget.signOut()}>Odjavi se</button></div>
+        </div>
         <header className="rounded-[28px] border border-white/60 bg-white/85 p-6 shadow-soft backdrop-blur dark:border-slate-700/70 dark:bg-slate-900/80 dark:shadow-[0_18px_50px_rgba(2,6,23,0.55)]">
           <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
             <div className="space-y-3">
@@ -393,6 +348,7 @@ function App() {
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                   <button
                     type="button"
+                    disabled={budget.busy || activeMonthId === '1900-01'}
                     onClick={() => setActiveMonthId((current) => shiftMonth(current, -1))}
                     className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:border-brand-300 hover:text-brand-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:border-sky-400 dark:hover:text-sky-200"
                   >
@@ -400,12 +356,15 @@ function App() {
                   </button>
                   <input
                     type="month"
+                    disabled={budget.busy}
                     value={activeMonthId}
-                    onChange={(event) => setActiveMonthId(event.target.value)}
+                    min="1900-01" max="2200-12" aria-label="Mesec pregleda"
+                    onChange={(event) => { if (validMonth(event.target.value)) setActiveMonthId(event.target.value); }}
                     className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 outline-none ring-0 transition focus:border-brand-400 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:focus:border-sky-400"
                   />
                   <button
                     type="button"
+                    disabled={budget.busy || activeMonthId === '2200-12'}
                     onClick={() => setActiveMonthId((current) => shiftMonth(current, 1))}
                     className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:border-brand-300 hover:text-brand-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:border-sky-400 dark:hover:text-sky-200"
                   >
@@ -452,6 +411,16 @@ function App() {
             </div>
           </div>
         </header>
+        {Object.keys(budgetMap).length === 0 && <div className="rounded-2xl border border-brand-100 bg-brand-50 p-5 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+          <p>Imate staru evidenciju? Prenesite je pre prvog novog unosa. Ako je na drugoj adresi ili uređaju, tamo izvezite JSON i ovde izaberite Import JSON.</p>
+          <button className="secondary mt-3" onClick={() => {
+            try {
+              const raw = localStorage.getItem('finansije-prodavnica-v1');
+              if (!raw) throw new Error('Na ovoj adresi nema stare evidencije. Uvezite prethodno izvezen JSON fajl.');
+              const parsed = JSON.parse(raw); inspectImport(parsed); setImportPreview(parsed);
+            } catch (error) { setTransferTone('error'); setTransferMessage((error as Error).message); }
+          }}>Proveri stare podatke u ovom browseru</button>
+        </div>}
 
         <section className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
           <div className="rounded-[28px] border border-white/60 bg-white/90 p-6 shadow-soft dark:border-slate-700/70 dark:bg-slate-900/80 dark:shadow-[0_18px_50px_rgba(2,6,23,0.45)]">
@@ -462,40 +431,7 @@ function App() {
               </p>
             </div>
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <label className="space-y-2">
-                <span className="text-sm font-medium text-slate-600 dark:text-slate-300">Planirani mesečni budžet</span>
-                <input
-                  type="number"
-                  min="0"
-                  step="1"
-                  value={activeMonth.plannedMonthlyBudget || ''}
-                  onChange={(event) =>
-                    updateActiveMonth((current) => ({
-                      ...current,
-                      plannedMonthlyBudget: Number(event.target.value) || 0,
-                    }))
-                  }
-                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-brand-400 focus:bg-white dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:focus:border-sky-400 dark:focus:bg-slate-800"
-                  placeholder="npr. 180000"
-                />
-              </label>
-              <label className="space-y-2">
-                <span className="text-sm font-medium text-slate-600 dark:text-slate-300">Mesečni cilj za štednju</span>
-                <input
-                  type="number"
-                  min="0"
-                  step="1"
-                  value={activeMonth.monthlySavingsGoal || ''}
-                  onChange={(event) =>
-                    updateActiveMonth((current) => ({
-                      ...current,
-                      monthlySavingsGoal: Number(event.target.value) || 0,
-                    }))
-                  }
-                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-brand-400 focus:bg-white dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:focus:border-sky-400 dark:focus:bg-slate-800"
-                  placeholder="npr. 20000"
-                />
-              </label>
+              <MonthSettings key={activeMonthId} month={activeMonth} mutate={budget.mutate} busy={budget.busy} />
               <label className="space-y-2">
                 <span className="text-sm font-medium text-slate-600 dark:text-slate-300">Datum unosa</span>
                 <input
@@ -503,15 +439,16 @@ function App() {
                   value={selectedDate}
                   min={`${activeMonthId}-01`}
                   max={`${activeMonthId}-${String(daysInMonth).padStart(2, '0')}`}
-                  onChange={(event) => setSelectedDate(event.target.value)}
+                  disabled={budget.busy}
+                  onChange={(event) => { if (validDate(event.target.value) && event.target.value.startsWith(activeMonthId)) setSelectedDate(event.target.value); }}
                   className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-brand-400 focus:bg-white dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:focus:border-sky-400 dark:focus:bg-slate-800"
                 />
               </label>
               <label className="space-y-2">
-                <span className="text-sm font-medium text-slate-600 dark:text-slate-300">Dnevni trošak</span>
+                <span className="text-sm font-medium text-slate-600 dark:text-slate-300">Nova kupovina (din)</span>
                 <input
                   type="text"
-                  inputMode="numeric"
+                  inputMode="decimal" disabled={budget.busy}
                   value={draftAmount}
                   onChange={(event) => setDraftAmount(event.target.value)}
                   onKeyDown={(event) => {
@@ -520,10 +457,10 @@ function App() {
                     }
                   }}
                   className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-brand-400 focus:bg-white dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:focus:border-sky-400 dark:focus:bg-slate-800"
-                  placeholder="npr. 5400 ili +1400"
+                  placeholder="npr. 1450 ili 1450,50"
                 />
                 <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">
-                  Unesi puni iznos ili dodaj novi trošak za isti dan preko formata kao `+1400`.
+                  Iznos se dodaje na dnevni zbir. Za dan bez potrošnje unesite 0.
                 </p>
                 <p className="text-xs leading-5 text-slate-600 dark:text-slate-300">{selectedDayMessage}</p>
                 {draftPreviewMessage ? (
@@ -531,6 +468,7 @@ function App() {
                 ) : null}
               </label>
             </div>
+            <label className="mt-4 block space-y-2"><span className="text-sm font-medium text-slate-600 dark:text-slate-300">Opis kupovine (opciono)</span><input className="field" value={draftDescription} maxLength={160} disabled={budget.busy} onChange={(e) => setDraftDescription(e.target.value)} placeholder="npr. Maxi, namirnice" /></label>
             <div className="mt-5 grid gap-3 lg:grid-cols-[minmax(0,0.65fr)_minmax(0,1.35fr)_auto] lg:items-stretch">
               <div className="rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-600 dark:bg-slate-800 dark:text-slate-300">
                 <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
@@ -552,9 +490,10 @@ function App() {
               <button
                 type="button"
                 onClick={handleAmountSubmit}
+                disabled={budget.busy || parsedDraftAmount === null}
                 className="border-2 border-amber-200/80 bg-gradient-to-br from-[#ffe27a] via-[#f5c116] to-[#c98600] px-6 py-3.5 text-sm font-black uppercase tracking-[0.18em] text-[#4b2a00] shadow-[0_14px_28px_rgba(201,134,0,0.38)] transition hover:-translate-y-0.5 hover:from-[#ffea8f] hover:via-[#ffd447] hover:to-[#d99810] hover:shadow-[0_18px_34px_rgba(201,134,0,0.46)] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-amber-200/60 active:translate-y-0 [border-radius:30px_10px_30px_10px] lg:self-center"
               >
-                Sačuvaj unos
+                {budget.busy ? 'Čuvanje…' : 'Dodaj kupovinu'}
               </button>
             </div>
           </div>
@@ -631,7 +570,9 @@ function App() {
           ))}
         </section>
 
-        <section className="grid gap-6 2xl:grid-cols-[1.4fr_1fr]">
+        <Purchases key={selectedDate} expenses={budget.data.expenses} date={selectedDate} busy={budget.busy} mutate={budget.mutate} formatCurrency={formatCurrency} />
+
+        <section className="grid min-w-0 grid-cols-1 gap-6 2xl:grid-cols-[1.4fr_1fr]">
           <div className="rounded-[28px] border border-white/60 bg-white/90 p-6 shadow-soft dark:border-slate-700/70 dark:bg-slate-900/80 dark:shadow-[0_18px_50px_rgba(2,6,23,0.45)]">
             <div className="mb-4">
               <h2 className="text-xl font-semibold text-ink dark:text-white">Uneti dani</h2>
@@ -671,7 +612,7 @@ function App() {
                       return (
                         <tr key={row.id} className={`border-t border-slate-100 dark:border-slate-800 ${rowTone}`}>
                           <td className="whitespace-nowrap px-4 py-3 font-medium text-slate-700 dark:text-slate-200">
-                            {row.dayLabel}
+                            <button className="underline decoration-dotted underline-offset-4" onClick={() => { setSelectedDate(row.id); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>{row.dayLabel}</button>
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 font-semibold text-brand-700 dark:text-sky-300">
                             {formatCurrency(row.amount)}
@@ -725,7 +666,7 @@ function App() {
                 ['Prosečna dnevna potrošnja', formatCurrency(averageSpent)],
                 ['Projekcija do kraja meseca', formatCurrency(projectedTotal)],
                 ['Preostali budžet', formatCurrency(remainingBudget)],
-                ['Preostali dnevni limit za cilj štednje', formatCurrency(dailyLimitForGoal)],
+                ['Preostali dnevni limit za cilj štednje', savingsGoalValue],
                 ['Dana praćeno', String(trackedDays)],
                 ['Dana prekoračeno', String(overspentDays)],
                 ['Dana ušteđeno', String(savedDays)],
@@ -764,7 +705,13 @@ function App() {
             />
           </Suspense>
         </section>
+        <footer className="flex flex-wrap items-center justify-between gap-3 px-2 text-xs text-slate-500">
+          <a href="/privacy">Privatnost · Naše finansije</a>
+          {disconnectConfirm ? <div className="flex gap-2"><button className="secondary" disabled={budget.busy} onClick={async () => { if (await budget.mutate('/api/disconnect-gpt', 'POST', {}, 'GPT pristup je opozvan na svim nalozima.')) setDisconnectConfirm(false); }}>Potvrdi opoziv GPT pristupa</button><button className="secondary" onClick={() => setDisconnectConfirm(false)}>Odustani</button></div> : <button className="secondary" onClick={() => setDisconnectConfirm(true)}>Opozovi GPT pristup</button>}
+        </footer>
       </div>
+
+      {importPreview !== null && <ImportPreview input={importPreview} onClose={() => setImportPreview(null)} mutate={budget.mutate} busy={budget.busy} error={budget.failed ? budget.message : undefined} />}
 
       <input
         ref={importInputRef}
