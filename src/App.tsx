@@ -11,14 +11,16 @@ import MonthSettings from './components/MonthSettings';
 import Purchases from './components/Purchases';
 import ImportPreview, { inspectImport } from './components/ImportPreview';
 
+// Whole dinars only: a dot groups thousands and no decimal comma is ever printed.
 const currency = new Intl.NumberFormat('sr-Latn-RS', {
   style: 'currency',
   currency: 'RSD',
-  maximumFractionDigits: 2,
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 0,
 });
 
 const percent = new Intl.NumberFormat('sr-Latn-RS', {
-  maximumFractionDigits: 1,
+  maximumFractionDigits: 0,
 });
 
 const MONTH_NAMES_LATIN = [
@@ -448,7 +450,7 @@ function App() {
                 <span className="text-sm font-medium text-slate-600 dark:text-slate-300">Nova kupovina (din)</span>
                 <input
                   type="text"
-                  inputMode="decimal" disabled={budget.busy}
+                  inputMode="numeric" disabled={budget.busy}
                   value={draftAmount}
                   onChange={(event) => setDraftAmount(event.target.value)}
                   onKeyDown={(event) => {
@@ -457,10 +459,10 @@ function App() {
                     }
                   }}
                   className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-brand-400 focus:bg-white dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:focus:border-sky-400 dark:focus:bg-slate-800"
-                  placeholder="npr. 1450 ili 1450,50"
+                  placeholder="npr. 1450"
                 />
                 <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">
-                  Iznos se dodaje na dnevni zbir. Za dan bez potrošnje unesite 0.
+                  Iznos se dodaje na dnevni zbir. Unosi se ceo dinar, bez para; tačka razdvaja hiljade. Za dan bez potrošnje unesite 0.
                 </p>
                 <p className="text-xs leading-5 text-slate-600 dark:text-slate-300">{selectedDayMessage}</p>
                 {draftPreviewMessage ? (

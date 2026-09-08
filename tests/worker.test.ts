@@ -79,12 +79,12 @@ test('two sessions add to the same day; retry and simultaneous duplicate are ide
   assert.equal(summary.totalSpent, 2200); assert.equal(summary.days[0].purchases, 2);
   assert.equal((await request('/api/expenses', 'POST', { ...first, amount: 999 }, a)).status, 409);
 });
-test('zero is tracked, decimal money is exact, invalid values and dates are rejected', async () => {
+test('zero is tracked, whole dinars are exact, paras and invalid dates are rejected', async () => {
   const cookie = await login();
-  for (const amount of [0, 0.1, 0.2]) assert.equal((await request('/api/expenses', 'POST', purchase(amount), cookie)).status, 201);
+  for (const amount of [0, 100, 200]) assert.equal((await request('/api/expenses', 'POST', purchase(amount), cookie)).status, 201);
   const state = await (await request('/api/state', 'GET', undefined, cookie)).json() as any;
-  assert.equal(state.budgetMap['2026-09'].entries[7].amount, 0.3);
-  for (const data of [{ ...purchase(), date: '2026-09-31' }, purchase(-1), purchase(0.001), purchase(Infinity)]) assert.equal((await request('/api/expenses', 'POST', data, cookie)).status, 400);
+  assert.equal(state.budgetMap['2026-09'].entries[7].amount, 300);
+  for (const data of [{ ...purchase(), date: '2026-09-31' }, purchase(-1), purchase(0.5), purchase(123.45), purchase(Infinity)]) assert.equal((await request('/api/expenses', 'POST', data, cookie)).status, 400);
 });
 test('optimistic edit prevents stale overwrite; deleted purchases are not revived by retries', async () => {
   const cookie = await login(), payload = purchase();
@@ -112,18 +112,19 @@ test('legacy import is atomic, repeatable without duplicates, and cannot overwri
   assert.equal((await request('/api/import', 'POST', map, cookie)).status, 200);
   const state = await (await request('/api/state', 'GET', undefined, cookie)).json() as any;
   assert.equal(state.expenses.length, 2); assert.equal(state.budgetMap['2026-09'].entries[0].amount, 0);
+  assert.equal(state.budgetMap['2026-09'].entries[1].amount, 551);
   month.entries[1].amount = 999;
   assert.equal((await request('/api/import', 'POST', map, cookie)).status, 409);
 });
 test('invalid import leaves the database empty; v2 backup round-trips purchases', async () => {
   const cookie = await login(); const month = createMonthBudget(2026, 9);
   assert.equal((await request('/api/import', 'POST', { '2026-09': { ...month, entries: [{ date: '2026-09-31', amount: 500 }] } }, cookie)).status, 400);
-  await request('/api/expenses', 'POST', purchase(123.45), cookie);
+  await request('/api/expenses', 'POST', purchase(12345), cookie);
   const backup = await (await request('/api/export', 'GET', undefined, cookie)).json();
   await db.batch([db.prepare('DELETE FROM expenses'), db.prepare('DELETE FROM months')]);
   assert.equal((await request('/api/import', 'POST', backup, cookie)).status, 200);
   const restored = await (await request('/api/state', 'GET', undefined, cookie)).json() as any;
-  assert.equal(restored.expenses[0].amount, 123.45);
+  assert.equal(restored.expenses[0].amount, 12345);
 });
 test('OAuth enforces redirect allowlist, state and CSRF', async () => {
   assert.equal((await request('/oauth/authorize?client_id=test-client&response_type=code&redirect_uri=https://evil.test&state=test')).status, 400);

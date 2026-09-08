@@ -43,7 +43,7 @@ try {
   await page.getByLabel('Mesečni cilj za štednju').fill('5000');
   await page.getByRole('button', { name: 'Sačuvaj plan', exact: true }).click();
   await page.getByText('Mesečni plan je sačuvan.', { exact: false }).waitFor();
-  await page.getByLabel('Nova kupovina (din)').fill('1500,50');
+  await page.getByLabel('Nova kupovina (din)').fill('1.500');
   await page.getByLabel('Opis kupovine (opciono)').fill('Prva kupovina');
   await page.getByRole('button', { name: 'Dodaj kupovinu' }).click();
   await page.getByText('Prva kupovina', { exact: true }).waitFor();
@@ -62,13 +62,13 @@ try {
   await phone.getByText('Suprugina kupovina', { exact: true }).waitFor();
   await page.getByRole('button', { name: 'Osveži', exact: true }).click();
   await page.getByText('Suprugina kupovina', { exact: true }).waitFor();
-  assert.equal((await db.prepare('SELECT SUM(amount) AS total FROM expenses WHERE deleted_at IS NULL').first()).total, 220050);
+  assert.equal((await db.prepare('SELECT SUM(amount) AS total FROM expenses WHERE deleted_at IS NULL').first()).total, 2200);
 
   await page.getByRole('button', { name: 'Izmeni', exact: true }).first().click();
-  await page.getByLabel('Iznos', { exact: true }).fill('1600,50');
+  await page.getByLabel('Iznos', { exact: true }).fill('1600');
   await page.getByRole('button', { name: 'Sačuvaj izmenu' }).click();
   await page.getByText('Kupovina je izmenjena.', { exact: false }).waitFor();
-  assert.equal((await db.prepare('SELECT SUM(amount) AS total FROM expenses WHERE deleted_at IS NULL').first()).total, 230050);
+  assert.equal((await db.prepare('SELECT SUM(amount) AS total FROM expenses WHERE deleted_at IS NULL').first()).total, 2300);
 
   // Server commits successfully but the client loses the response: retry must not add twice.
   await page.getByLabel('Nova kupovina (din)').fill('300');
@@ -106,7 +106,7 @@ try {
   await page.getByRole('checkbox').check();
   await page.getByRole('button', { name: 'Potvrdi uvoz' }).click();
   await page.getByRole('dialog').waitFor({ state: 'detached' });
-  assert.equal((await db.prepare('SELECT SUM(amount) AS total FROM expenses').first()).total, 55500);
+  assert.equal((await db.prepare('SELECT SUM(amount) AS total FROM expenses').first()).total, 555);
   assert.ok(await page.evaluate(() => localStorage.getItem('finansije-prodavnica-v1')));
   await page.getByRole('button', { name: 'Odjavi se' }).click();
   await page.getByRole('button', { name: 'Otvori finansije' }).waitFor();

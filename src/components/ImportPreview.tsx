@@ -15,7 +15,7 @@ export default function ImportPreview({ input, onClose, mutate, busy, error }: {
   useEffect(() => { dialog.current?.showModal(); }, []);
   return <dialog ref={dialog} onCancel={(e) => { if (busy) e.preventDefault(); else onClose(); }} className="w-[calc(100%-2rem)] max-w-lg rounded-[28px] border-0 bg-white p-7 shadow-xl backdrop:bg-slate-950/50 dark:bg-slate-900 dark:text-white">
     <h2 className="text-2xl font-semibold">Prenesi postojeću evidenciju</h2>
-    <p className="mt-4 text-sm leading-6">Kopija sadrži {info.months} meseci, {info.days} unetih dana i ukupno {info.total.toLocaleString('sr-Latn-RS')} dinara.</p>
+    <p className="mt-4 text-sm leading-6">Kopija sadrži {info.months} meseci, {info.days} unetih dana i ukupno {Math.round(info.total).toLocaleString('sr-Latn-RS', { maximumFractionDigits: 0 })} dinara.</p>
     <p className="mt-3 text-sm leading-6 text-slate-500">Uvoz radi samo kada je zajednička baza prazna. Originalna kopija i stari podaci u browseru ostaju sačuvani.</p>
     <label className="mt-5 flex items-start gap-3 text-sm"><input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} disabled={busy} />Želim da prenesem ove podatke u našu zajedničku evidenciju.</label>
     <div className="mt-6 flex flex-wrap gap-3"><button className="primary" disabled={busy || !confirmed} onClick={async () => { if (await mutate('/api/import', 'POST', input, 'Evidencija je preneta u zajedničku bazu.')) onClose(); }}>{busy ? 'Prenošenje…' : 'Potvrdi uvoz'}</button><button className="secondary" disabled={busy} onClick={onClose}>Odustani</button></div>

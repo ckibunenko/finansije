@@ -22,7 +22,7 @@ export function openApi(origin: string) {
           properties: {
             requestId: { type: 'string', description: 'Jedinstven UUID. Sačuvaj isti pri ponavljanju zahteva.' },
             date: { type: 'string', format: 'date', description: 'Datum kupovine YYYY-MM-DD u Europe/Belgrade.' },
-            amount: { type: 'number', minimum: 0, maximum: 100000000, description: 'Iznos u RSD sa najviše dve decimale. 1.450 dinara znači 1450.' },
+            amount: { type: 'integer', minimum: 0, maximum: 100000000, description: 'Iznos u celim dinarima (RSD), bez para. 1.450 dinara znači 1450.' },
             description: { type: 'string', maxLength: 160, description: 'Kratak opis koji je korisnik naveo, ili prazan tekst.' },
           },
         } } } },
