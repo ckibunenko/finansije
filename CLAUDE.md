@@ -1,3 +1,119 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## What this is
+
+"Naše finansije" — a single-household store-expense tracker for one couple. A React SPA plus a
+Cloudflare Worker backed by D1, deployed to `nase-finansije.finansije-prodavnica.workers.dev` on the
+Workers **Free** plan. A second client is a ChatGPT custom GPT that talks to the same Worker over
+OAuth 2.0 Actions.
+
+All user-facing strings — UI copy, API error messages, docs — are **Serbian (Latin script)**. New
+errors and labels must follow. Currency is RSD, timezone `Europe/Belgrade`.
+
+`README.md` is stale: it describes an earlier localStorage-only version. Server D1 data is
+authoritative; `localStorage` now holds only the theme preference and the legacy `finansije-prodavnica-v1`
+blob offered for one-time import.
+
+## Commands
+
+```bash
+npm install
+npm run setup:local          # writes .dev.vars with a local test password (first run only)
+npm run db:local             # apply migrations to the local D1
+
+npm run dev:api              # Worker on 127.0.0.1:8787  — run this…
+npm run dev                  # …and Vite on 5173, which proxies /api /oauth /openapi.json /privacy to 8787
+
+npm run build                # tsc -b && tsc -p tsconfig.worker.json && vite build  (the only typecheck)
+npm test                     # node --test over tests/*.test.ts (Miniflare, no network)
+npm run test:browser         # Playwright + Miniflare against the built dist/ — run `npm run build` first
+npm run deploy               # build → apply remote migrations → wrangler deploy
+npm run check:oauth          # replays the full OAuth flow against the live deployment
+```
+
+Run one test by name (the runner strips TypeScript types natively):
+
+```bash
+node --experimental-strip-types --test --test-name-pattern "OAuth refresh" tests/worker.test.ts
+```
+
+There is no linter and no separate typecheck script — `npm run build` is what catches type errors,
+and it typechecks the app and the worker under *different* tsconfigs.
+
+## Architecture
+
+**Three TypeScript projects, one shared module.** `tsconfig.app.json` (`src/`, DOM libs),
+`tsconfig.worker.json` (`worker/` + `shared/`, `@cloudflare/workers-types`, `allowImportingTsExtensions`),
+`tsconfig.node.json` (Vite config). `shared/budget.ts` is the only code both sides compile — the worker
+imports it as `'../shared/budget.ts'` (with extension), the browser as `'../../shared/budget'` (without).
+Keep it dependency-free and DOM-free.
+
+**Serving.** `wrangler.jsonc` binds `dist/` as `ASSETS` with SPA fallback, and `run_worker_first` for
+`/api/*`, `/oauth/*`, `/openapi.json`, `/privacy`. Everything else falls through to `env.ASSETS.fetch`
+unmodified — do not rewrite `/privacy` to `/privacy.html`, the asset server redirects it back and the two
+loop forever (this was a real production bug).
+
+**Request flow.** `worker/index.ts` is a flat if-chain router; `worker/http.ts` holds `HttpError`, `json`,
+body-size-limited readers, CSRF origin checks, and `secure()` which stamps CSP/HSTS/etc on every response.
+Throwing `HttpError` is the only way to return a non-200; unknown errors become a 503 with a generic
+Serbian message and are logged by error *name* only — never log bodies, amounts, tokens, or SQL params.
+
+**Two caller identities.** `authenticate()` returns `'web'` (HttpOnly `__Host-` session cookie) or `'gpt'`
+(OAuth bearer). The GPT identity may only call `GET /api/summary` and `POST /api/expenses`; the router
+403s it out of everything else with one guard. Keep new destructive routes behind that guard.
+
+**Password rotation as global revocation.** `sessions`, `oauth_codes`, and `oauth_tokens` each store a
+`password_version` (a hash of `PASSWORD_HASH`). Changing the secret invalidates every session and token
+implicitly. The nightly cron (`scheduled` → `cleanup`) sweeps expired and stale-version rows.
+
+**Money is integer minor units.** D1 stores paras (`amount INTEGER`); `toMinor()` in `shared/budget.ts` is
+the single validator/converter (0–100,000,000 RSD, ≤2 decimals) and `/100` happens only at the response
+boundary. Never introduce a float column or a second parser.
+
+**Optimistic concurrency.** `months` and `expenses` carry a `version`; every write is
+`UPDATE … WHERE id=? AND version=?` and a zero-row result becomes a 409 telling the user to refresh.
+`version: 0` on a month means "insert".
+
+**Change detection.** `state_revision` is a single row bumped by six triggers (insert/update/delete on
+both tables). `GET /api/state?since=N` returns `{unchanged:true}` when the client is current. `useBudget()`
+in `src/lib/api.ts` polls every 20s plus on visibility/focus/online, holds a `writeLock` so polls never
+race a mutation, and uses a `generation` counter to discard stale responses.
+
+**Idempotency.** A client-generated `requestId` *is* the expense primary key. Insert is
+`ON CONFLICT DO NOTHING RETURNING *`; the stored `original_payload` is compared to the retried payload, so
+the same id with different data is a 409 and a retry of a since-deleted purchase returns `deleted: true`
+rather than resurrecting it.
+
+**Import is one-shot.** `POST /api/import` accepts both the legacy budget map and `finansije-v2` backups,
+verifies that daily totals reconcile with individual purchases, and commits an `imports` lock row in the
+same D1 batch as the data — so it can only ever land in an empty database, and an identical re-import is a
+no-op rather than a duplicate.
+
+**Frontend.** `src/App.tsx` (~730 lines) is the whole screen and owns all UI state; `useBudget()` owns all
+server state and is the only place that calls `api()`. Mutations go through `budget.mutate(path, method,
+payload, successMessage)`, which reloads state and surfaces a Serbian message. `ChartsPanel` is
+`lazy()`-loaded (Recharts). Styling is Tailwind with a `dark` class on `<html>`.
+
+**GPT contract.** `worker/openapi.ts` generates the Actions schema from the request origin — it exposes
+exactly two operations and no secrets, and `tests/worker.test.ts` asserts that. `GPT_INSTRUCTIONS.md` is
+the GPT's system prompt; if you change `addExpense` semantics (it *adds to* a day's total, never replaces
+it), update that file, `openapi.ts`, and `GPT_SETUP.md` together.
+
+## Secrets and deployment
+
+`.dev.vars` (local) and Cloudflare secrets (production) supply `PASSWORD_HASH`, `OAUTH_CLIENT_ID`,
+`OAUTH_CLIENT_SECRET`, `OAUTH_REDIRECT_URIS`. `scripts/setup-secrets.mjs` generates a 192-bit random
+household key — the fast unsalted SHA-256 verification is deliberate and only safe because the key is
+random, so never swap in a human-chosen password. Production secrets live in the git-ignored
+`secrets.local.json`, uploaded with `npx wrangler secret bulk secrets.local.json`; `npm run deploy`
+intentionally creates no resources and uploads no secrets. No `VITE_*` variable may carry a secret.
+
+The GPT's real OAuth callback comes from `npx wrangler tail` (`redirect_uri` in the actual request), not
+from what the ChatGPT editor displays — the editor showed three different ids for one GPT. See `LIVE.md`
+for the deployment log, `DEPLOYMENT.md` for the setup runbook, `GPT_SETUP.md` for connecting a GPT.
+
 <!-- rtk-instructions v2 -->
 # RTK (Rust Token Killer) - Token-Optimized Commands
 
