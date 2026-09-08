@@ -1,4 +1,4 @@
-import { belgradeToday, createMonthBudget, isRecord, parseImportedBudgetMap, toMinor, validDate, validMonth } from '../shared/budget.ts';
+import { belgradeToday, createMonthBudget, importedDinars, isRecord, parseImportedBudgetMap, toDinars, toParas, validDate, validMonth } from '../shared/budget.ts';
 import type { BudgetState, Expense } from '../shared/budget.ts';
 import { body, HttpError, json } from './http.ts';
 import type { Env } from './http.ts';
@@ -7,12 +7,12 @@ import { hash } from './auth.ts';
 type MonthRow = { id: string; budget: number; savings: number; version: number };
 type ExpenseRow = { id: string; date: string; amount: number; description: string; source: Expense['source']; version: number; created_at: string; deleted_at: string | null; original_payload: string };
 const expense = (row: ExpenseRow): Expense => ({
-  id: row.id, date: row.date, amount: row.amount / 100, description: row.description,
+  id: row.id, date: row.date, amount: row.amount, description: row.description,
   source: row.source, version: row.version, createdAt: row.created_at,
 });
 export const validId = (value: unknown): value is string => typeof value === 'string' && /^[a-zA-Z0-9_-]{16,80}$/.test(value);
 function amount(value: unknown) {
-  try { return toMinor(value); } catch (error) { throw new HttpError(400, (error as Error).message); }
+  try { return toDinars(value); } catch (error) { throw new HttpError(400, (error as Error).message); }
 }
 function description(value: unknown) {
   if (value === undefined) return '';
@@ -29,7 +29,7 @@ export async function getState(env: Env): Promise<BudgetState> {
   const budgetMap: BudgetState['budgetMap'] = {};
   for (const row of months.results as unknown as MonthRow[]) {
     budgetMap[row.id] = { ...createMonthBudget(Number(row.id.slice(0, 4)), Number(row.id.slice(5))),
-      plannedMonthlyBudget: row.budget / 100, monthlySavingsGoal: row.savings / 100, version: row.version };
+      plannedMonthlyBudget: row.budget, monthlySavingsGoal: row.savings, version: row.version };
   }
   const totals = new Map<string, number>();
   for (const row of purchases.results as unknown as ExpenseRow[]) {
@@ -37,7 +37,7 @@ export async function getState(env: Env): Promise<BudgetState> {
     budgetMap[id] ??= createMonthBudget(Number(id.slice(0, 4)), Number(id.slice(5)));
     const total = (totals.get(row.date) ?? 0) + row.amount;
     totals.set(row.date, total);
-    budgetMap[id].entries[Number(row.date.slice(8)) - 1].amount = total / 100;
+    budgetMap[id].entries[Number(row.date.slice(8)) - 1].amount = total;
   }
   return { budgetMap, expenses: (purchases.results as unknown as ExpenseRow[]).map(expense), today: belgradeToday(), revision: Number((revision.results[0] as { version: number }).version) };
 }
@@ -52,9 +52,9 @@ export async function summary(env: Env, month: string) {
   const rows = totals.results as unknown as { date: string; amount: number; count: number }[];
   const spent = rows.reduce((sum, row) => sum + row.amount, 0);
   return json({ today: belgradeToday(), timezone: 'Europe/Belgrade', currency: 'RSD', month,
-    budget: (plan?.budget ?? 0) / 100, savingsGoal: (plan?.savings ?? 0) / 100,
-    totalSpent: spent / 100, remainingBudget: ((plan?.budget ?? 0) - spent) / 100,
-    days: rows.map((row) => ({ date: row.date, amount: row.amount / 100, purchases: row.count })),
+    budget: plan?.budget ?? 0, savingsGoal: plan?.savings ?? 0,
+    totalSpent: spent, remainingBudget: (plan?.budget ?? 0) - spent,
+    days: rows.map((row) => ({ date: row.date, amount: row.amount, purchases: row.count })),
     recentExpenses: (recent.results as unknown as ExpenseRow[]).map(expense),
     recentExpensesLimit: 20,
   });
@@ -108,25 +108,27 @@ export async function updateMonth(request: Request, env: Env, id: string) {
 export function parseBackup(input: unknown) {
   const v2 = isRecord(input) && input.format === 'finansije-v2';
   const map = parseImportedBudgetMap(v2 ? input.budgetMap : input);
-  const months = Object.values(map).map((m) => ({ id: m.id, budget: toMinor(m.plannedMonthlyBudget), savings: toMinor(m.monthlySavingsGoal) }));
+  const months = Object.values(map).map((m) => ({ id: m.id, budget: importedDinars(m.plannedMonthlyBudget), savings: importedDinars(m.monthlySavingsGoal) }));
   let expenses: { id: string; date: string; amount: number; description: string; source: Expense['source']; created_at: string }[];
   if (v2) {
     if (!Array.isArray(input.expenses) || input.expenses.length > 10000) throw new Error('Neispravna lista kupovina u rezervnoj kopiji.');
     const seen = new Set<string>();
+    // Reconciliation stays exact and in paras, so a backup written before whole dinars is still
+    // checked exactly as it was written; only the stored amount is rounded.
+    const exactTotals = new Map<string, number>();
     expenses = input.expenses.map((raw: unknown) => {
       if (!isRecord(raw) || !validId(raw.id) || seen.has(raw.id) || !validDate(raw.date) || !map[raw.date.slice(0, 7)] ||
           !['web', 'gpt', 'import'].includes(String(raw.source)) || typeof raw.createdAt !== 'string' || !Number.isFinite(Date.parse(raw.createdAt))) throw new Error('Rezervna kopija sadrži neispravnu ili ponovljenu kupovinu.');
       seen.add(raw.id);
-      return { id: raw.id, date: raw.date, amount: toMinor(raw.amount), description: description(raw.description), source: raw.source as Expense['source'], created_at: new Date(raw.createdAt).toISOString() };
+      exactTotals.set(raw.date, (exactTotals.get(raw.date) ?? 0) + toParas(raw.amount));
+      return { id: raw.id, date: raw.date, amount: importedDinars(raw.amount), description: description(raw.description), source: raw.source as Expense['source'], created_at: new Date(raw.createdAt).toISOString() };
     });
-    const totals = new Map<string, number>();
-    for (const entry of expenses) totals.set(entry.date, (totals.get(entry.date) ?? 0) + entry.amount);
     for (const month of Object.values(map)) for (const day of month.entries) {
-      if ((totals.get(day.date) ?? null) !== (day.amount === null ? null : toMinor(day.amount))) throw new Error('Dnevni zbirovi u kopiji se ne slažu sa kupovinama.');
+      if ((exactTotals.get(day.date) ?? null) !== (day.amount === null ? null : toParas(day.amount))) throw new Error('Dnevni zbirovi u kopiji se ne slažu sa kupovinama.');
     }
   } else {
     expenses = Object.values(map).flatMap((m) => m.entries.filter((e) => e.amount !== null).map((e) => ({
-      id: `legacy-${e.date}-total`, date: e.date, amount: toMinor(e.amount),
+      id: `legacy-${e.date}-total`, date: e.date, amount: importedDinars(e.amount),
       description: 'Prenet dnevni zbir iz stare evidencije', source: 'import' as const, created_at: `${e.date}T12:00:00.000Z`,
     })));
   }

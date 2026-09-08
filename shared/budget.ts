@@ -24,18 +24,27 @@ export function validDate(value: unknown): value is string {
   const [year, month, day] = value.split('-').map(Number);
   return day >= 1 && day <= getDaysInMonth(year, month);
 }
-export function toMinor(value: unknown): number {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > MAX_AMOUNT ||
-      Math.abs(value * 100 - Math.round(value * 100)) > 0.00001) {
-    throw new Error('Iznos mora biti između 0 i 100.000.000 dinara, sa najviše dve decimale.');
+function inRange(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > MAX_AMOUNT) {
+    throw new Error('Iznos mora biti između 0 i 100.000.000 dinara.');
   }
-  return Math.round(value * 100);
+  return value;
 }
-// Decimal comma and ungrouped decimal dot are accepted; ambiguous grouping is rejected.
+// Money is whole dinars everywhere: input, database, API and screen. Paras do not exist.
+export function toDinars(value: unknown): number {
+  const amount = inRange(value);
+  if (!Number.isInteger(amount)) throw new Error('Iznos mora biti ceo broj dinara, bez para.');
+  return amount;
+}
+// Backups written before the switch still carry paras. They are checked exactly as written
+// (in paras, so day totals must still reconcile) and rounded only on the way into the database.
+export const toParas = (value: unknown) => Math.round(inRange(value) * 100);
+export const importedDinars = (value: unknown) => Math.round(inRange(value));
+// A dot is thousand grouping, never a decimal point, and a decimal comma no longer has a meaning.
 export function parseAmount(text: string): number | null {
-  const value = text.trim().replace(/^\+\s*/, '');
-  if (!/^\d+(?:[.,]\d{1,2})?$/.test(value)) return null;
-  try { return toMinor(Number(value.replace(',', '.'))) / 100; } catch { return null; }
+  const value = text.trim().replace(/^\+\s*/, '').replace(/\s/g, '');
+  if (!/^\d+$/.test(value) && !/^\d{1,3}(?:\.\d{3})+$/.test(value)) return null;
+  try { return toDinars(Number(value.replace(/\./g, ''))); } catch { return null; }
 }
 export const buildMonthEntries = (year: number, month: number): DayEntry[] =>
   Array.from({ length: getDaysInMonth(year, month) }, (_, index) => ({
@@ -60,15 +69,15 @@ export function parseImportedBudgetMap(input: unknown): MonthBudgetMap {
       throw new Error(`Mesec "${id}" nema ispravan format.`);
     }
     const month = createMonthBudget(raw.year as number, raw.month as number);
-    month.plannedMonthlyBudget = toMinor(raw.plannedMonthlyBudget) / 100;
-    month.monthlySavingsGoal = toMinor(raw.monthlySavingsGoal) / 100;
+    month.plannedMonthlyBudget = inRange(raw.plannedMonthlyBudget);
+    month.monthlySavingsGoal = inRange(raw.monthlySavingsGoal);
     const dates = new Set<string>();
     for (const entry of raw.entries) {
       if (!isRecord(entry) || !validDate(entry.date) || !entry.date.startsWith(id + '-') || dates.has(entry.date)) {
         throw new Error(`Mesec ${id} sadrži neispravan ili ponovljen datum.`);
       }
       dates.add(entry.date);
-      month.entries[Number(entry.date.slice(8)) - 1].amount = entry.amount === null ? null : toMinor(entry.amount) / 100;
+      month.entries[Number(entry.date.slice(8)) - 1].amount = entry.amount === null ? null : inRange(entry.amount);
     }
     result[id] = month;
   }

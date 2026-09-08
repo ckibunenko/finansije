@@ -68,9 +68,13 @@ Serbian message and are logged by error *name* only — never log bodies, amount
 `password_version` (a hash of `PASSWORD_HASH`). Changing the secret invalidates every session and token
 implicitly. The nightly cron (`scheduled` → `cleanup`) sweeps expired and stale-version rows.
 
-**Money is integer minor units.** D1 stores paras (`amount INTEGER`); `toMinor()` in `shared/budget.ts` is
-the single validator/converter (0–100,000,000 RSD, ≤2 decimals) and `/100` happens only at the response
-boundary. Never introduce a float column or a second parser.
+**Money is whole dinars.** Paras do not exist anywhere: `amount INTEGER` counts dinars, `toDinars()` in
+`shared/budget.ts` is the single validator (integer, 0–100,000,000), and nothing multiplies or divides by
+100. Display goes through one `Intl.NumberFormat('sr-Latn-RS')` with zero fraction digits, so a dot groups
+thousands and a decimal comma is never printed; `parseAmount()` reads `1450` and `1.450` alike and rejects
+anything carrying a comma or a decimal point. Backups written before migration `0003` still hold paras —
+`parseBackup()` reconciles those exactly in paras (`toParas`) and rounds only on the way into the database
+(`importedDinars`), so an old copy still restores. Never introduce a float column or a second parser.
 
 **Optimistic concurrency.** `months` and `expenses` carry a `version`; every write is
 `UPDATE … WHERE id=? AND version=?` and a zero-row result becomes a 409 telling the user to refresh.

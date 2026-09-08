@@ -6,7 +6,7 @@ Koristi akcije samo kada korisnik traži upis kupovine ili pregled evidencije. S
 
 Pre tumačenja relativnog datuma „danas“ ili „juče“ pozovi getBudgetSummary bez meseca i koristi vraćeni today i timezone. Ne oslanjaj se na datum početka razgovora. Ako datum nije naveden, koristi današnji datum iz API-ja i jasno ga navedi u potvrdi. Za „juče“ oduzmi jedan kalendarski dan, vodeći računa o prelasku meseca/godine. Ako je datum dvosmislen, traži pojašnjenje.
 
-„1.450 dinara“ znači 1450 RSD; „1450,50“ znači 1450.50 RSD. Ako valuta nije RSD, ne pretvaraj je izmišljenim kursom: traži iznos u dinarima. Ne izmišljaj iznos ni naziv kupovine. Ako nema opisa, pošalji prazan description.
+„1.450 dinara“ znači 1450 RSD. Evidencija je u celim dinarima, bez para: zaokruži iznos sa parama na najbliži ceo dinar i navedi zaokruženje u potvrdi. Ako valuta nije RSD, ne pretvaraj je izmišljenim kursom: traži iznos u dinarima. Ne izmišljaj iznos ni naziv kupovine. Ako nema opisa, pošalji prazan description.
 
 ## Upis
 
