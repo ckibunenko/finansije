@@ -51,6 +51,21 @@ try {
   await page.getByLabel('Nova kupovina (din)').press('Enter');
   assert.equal((await db.prepare('SELECT COUNT(*) AS count FROM expenses WHERE deleted_at IS NULL').first()).count, 1);
 
+  // The four fields of "Dnevni unos" sit in one grid row on a wide screen. The monthly-plan
+  // labels once held their text as a bare node, so space-y-2 skipped them and their inputs
+  // rode 12px high; a span keeps every input on the same line.
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  const inputTops = await page.evaluate(() => [...document.querySelectorAll('label')]
+    .filter((label) => label.querySelector('input'))
+    .slice(0, 4)
+    .map((label) => Math.round(label.querySelector('input').getBoundingClientRect().top)));
+  assert.equal(inputTops.length, 4);
+  assert.equal(new Set(inputTops).size, 1, `Dnevni unos fields must share one baseline, got ${inputTops}`);
+  // Whole dinars only: no para anywhere in the interface.
+  const visibleText = await page.locator('body').innerText();
+  assert.ok(/\d\s*RSD/.test(visibleText), 'The page must actually show amounts, or the check below is vacuous');
+  assert.ok(!/\d,\d\d\s*RSD/.test(visibleText), 'No amount may be shown with para');
+
   const b = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   const phone = await b.newPage();
   phone.on('pageerror', (error) => errors.push(error.message));
@@ -126,7 +141,7 @@ try {
   await page.getByRole('button', { name: 'Otvori finansije' }).waitFor();
   await page.screenshot({ path: screenshotDir + '/login.png' });
   assert.deepEqual(errors, []);
-  console.log('Browser checks passed: login, two devices, monthly plan, add/edit/delete, empty submit, lost response/retry, import, local backup, mobile layout, dark mode, phone shortcut, logout.');
+  console.log('Browser checks passed: login, two devices, monthly plan, add/edit/delete, empty submit, lost response/retry, import, local backup, mobile layout, field alignment, whole dinars, dark mode, phone shortcut, logout.');
 } catch (error) {
   if (page) await page.screenshot({ path: screenshotDir + '/failure.png', fullPage: true }).catch(() => {});
   throw error;

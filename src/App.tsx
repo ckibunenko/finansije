@@ -461,7 +461,7 @@ function App() {
                     }
                   }}
                   className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-brand-400 focus:bg-white dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:focus:border-sky-400 dark:focus:bg-slate-800"
-                  placeholder="npr. 1450 ili 1450,50"
+                  placeholder="npr. 1450"
                 />
                 <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">
                   Iznos se dodaje na dnevni zbir. Za dan bez potrošnje unesite 0.
