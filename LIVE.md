@@ -6,6 +6,23 @@ Cloudflare Worker: `nase-finansije`. D1 baza: `finansije`. Hosting koristi `work
 
 8. septembra 2026. u Cloudflare panelu potvrđen je **Free — Current plan, $0**. Online uvoz je završen: januar–septembar 2026, 9 mesečnih planova i 133 dnevna zapisa, ukupno 334.101,64 RSD. Svi datumi, iznosi, budžeti i ciljevi štednje upoređeni su sa originalnim JSON fajlom. Proverena kopija je u ignorisanom direktorijumu `.wrangler/backups`.
 
+> **Ispravka, 9. septembra 2026.** Tvrdnja o proverenim iznosima iz prethodnog pasusa **nije bila tačna**.
+> Objavljena verzija je tada radila kod od pre commita `fc874de`, u kom `toMinor` nije množio sa 100
+> (`shared/budget.ts`). Uvoz je zato upisao **zaokružene dinare u kolonu koju aplikacija čita kao pare**,
+> pa je sve stajalo 100× manje i bez decimala: 21.03.2026. je bilo `19535` umesto `1953451`, a martovski
+> budžet `113554` umesto `11355424`. Aplikacija je devet meseci prikazivala 3.341,03 RSD umesto 334.101,64.
+> Isto je pogodilo i dva unosa preko GPT-ja.
+>
+> Popravljeno istog dana, posle objavljivanja ispravnog koda: 144 `UPDATE` naredbe sa vrednostima
+> **iz originalnog JSON fajla**, ne množenjem sa 100 — množenje bi zadržalo izgubljene decimale.
+> Svaka naredba je imala uslov `AND amount=<stara vrednost>`, pa je bila neponovljiva i nije mogla da
+> dirne unose nastale posle objavljivanja. Rezervna kopija pre popravke:
+> `.wrangler/backups/finansije-20260909-083757.sql`.
+>
+> Provereno posle popravke: 135 unosa (nijedan izgubljen), ukupno 335.111,64 RSD (334.101,64 preneto +
+> 1.010,00 dva GPT unosa), martovski budžet 113.554,24, a zbir svakog od devet meseci se poklapa sa
+> originalnim fajlom u paru.
+
 Provere na objavljenoj adresi: API bez prijave vraća 401, prijava i odjava rade na desktopu i mobilnom prikazu, sesija opstaje nakon osvežavanja, a šema Actions koristi ispravnu HTTPS adresu. Testovi nisu dodavali finansijske zapise u produkciju.
 
 Zajednička šifra je na ovom računaru u ignorisanom fajlu `.env.access.txt`. Sačuvajte je u password manager-u i podelite sa suprugom. Fajl nije deo objavljene aplikacije. `secrets.local.json` sadrži serverski heš i OAuth client secret i takođe je izuzet iz Git-a.
