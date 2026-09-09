@@ -9,12 +9,16 @@ import { api, useBudget } from './lib/api';
 import Login from './components/Login';
 import MonthSettings from './components/MonthSettings';
 import Purchases from './components/Purchases';
+import Shortcut from './components/Shortcut';
 import ImportPreview, { inspectImport } from './components/ImportPreview';
 
+// The household works in whole dinars: no para anywhere in the interface. Amounts stay
+// exact in the database and are rounded only here, at the moment they are shown.
 const currency = new Intl.NumberFormat('sr-Latn-RS', {
   style: 'currency',
   currency: 'RSD',
-  maximumFractionDigits: 2,
+  maximumFractionDigits: 0,
+  minimumFractionDigits: 0,
 });
 
 const percent = new Intl.NumberFormat('sr-Latn-RS', {
@@ -448,7 +452,7 @@ function App() {
                 <span className="text-sm font-medium text-slate-600 dark:text-slate-300">Nova kupovina (din)</span>
                 <input
                   type="text"
-                  inputMode="decimal" disabled={budget.busy}
+                  inputMode="numeric" disabled={budget.busy}
                   value={draftAmount}
                   onChange={(event) => setDraftAmount(event.target.value)}
                   onKeyDown={(event) => {
@@ -705,6 +709,7 @@ function App() {
             />
           </Suspense>
         </section>
+        <Shortcut devices={budget.data?.devices ?? 0} busy={budget.busy} onChanged={() => { void budget.reload().catch(() => {}); }} />
         <footer className="flex flex-wrap items-center justify-between gap-3 px-2 text-xs text-slate-500">
           <a href="/privacy">Privatnost · Naše finansije</a>
           {disconnectConfirm ? <div className="flex gap-2"><button className="secondary" disabled={budget.busy} onClick={async () => { if (await budget.mutate('/api/disconnect-gpt', 'POST', {}, 'GPT pristup je opozvan na svim nalozima.')) setDisconnectConfirm(false); }}>Potvrdi opoziv GPT pristupa</button><button className="secondary" onClick={() => setDisconnectConfirm(false)}>Odustani</button></div> : <button className="secondary" onClick={() => setDisconnectConfirm(true)}>Opozovi GPT pristup</button>}

@@ -36,9 +36,9 @@ export function useBudget() {
     const current = ++generation.current;
     try {
       const previous = snapshot.current;
-      const response = await api<BudgetState | { unchanged: true; today: string }>('/api/state' + (previous ? `?since=${previous.revision}` : ''));
+      const response = await api<BudgetState | { unchanged: true; today: string; devices?: number }>('/api/state' + (previous ? `?since=${previous.revision}` : ''));
       if (!mounted.current || current !== generation.current) return;
-      const next = 'unchanged' in response ? { ...previous!, today: response.today } : response;
+      const next = 'unchanged' in response ? { ...previous!, today: response.today, devices: response.devices } : response;
       snapshot.current = next;
       setData(next); setAuth('ready'); setLastSynced(new Date());
     } catch (error) {

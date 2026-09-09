@@ -45,14 +45,22 @@ export async function webSession(request: Request, env: Env) {
   return !!await env.DB.prepare('SELECT 1 FROM sessions WHERE token_hash=? AND expires_at>? AND password_version=?')
     .bind(await hash(token), now(), await passwordVersion(env)).first();
 }
-export async function authenticate(request: Request, env: Env): Promise<'web' | 'gpt'> {
+export const DEVICE_TOKEN_AGE = 365 * 86400;
+export async function authenticate(request: Request, env: Env): Promise<'web' | 'gpt' | 'shortcut'> {
   if (!env.PASSWORD_HASH) throw new HttpError(503, 'Prijava još nije podešena.');
   const auth = request.headers.get('Authorization');
   if (auth) {
     const token = auth.match(/^Bearer ([a-f0-9]{64})$/)?.[1];
-    if (token && await env.DB.prepare('SELECT 1 FROM oauth_tokens WHERE access_hash=? AND access_expires>? AND refresh_expires>? AND password_version=?')
-      .bind(await hash(token), now(), now(), await passwordVersion(env)).first()) return 'gpt';
-    throw new HttpError(401, 'Povežite ponovo GPT sa finansijama.');
+    if (token) {
+      const [tokenHash, version] = [await hash(token), await passwordVersion(env)];
+      if (await env.DB.prepare('SELECT 1 FROM oauth_tokens WHERE access_hash=? AND access_expires>? AND refresh_expires>? AND password_version=?')
+        .bind(tokenHash, now(), now(), version).first()) return 'gpt';
+      // The phone shortcut carries the same shape of bearer token and inherits the
+      // same restrictions: only the monthly summary and adding a purchase.
+      if (await env.DB.prepare('SELECT 1 FROM device_tokens WHERE token_hash=? AND expires_at>? AND password_version=?')
+        .bind(tokenHash, now(), version).first()) return 'shortcut';
+    }
+    throw new HttpError(401, 'Povežite ponovo GPT ili prečicu sa finansijama.');
   }
   if (!await webSession(request, env)) throw new HttpError(401, 'Prijavite se zajedničkom šifrom.');
   if (!['GET', 'HEAD'].includes(request.method)) sameOrigin(request);
@@ -71,6 +79,24 @@ export async function logout(request: Request, env: Env) {
   sameOrigin(request);
   await env.DB.prepare('DELETE FROM sessions WHERE token_hash=?').bind(await hash(cookie(request, sessionName(request)))).run();
   return json({ ok: true }, 200, { 'Set-Cookie': setCookie(request, sessionName(request), '', 0) });
+}
+
+export async function createDeviceToken(env: Env, label: unknown) {
+  const name = typeof label === 'string' && label.trim() ? label.trim().slice(0, 40) : 'Telefon';
+  const token = randomToken();
+  await env.DB.prepare('INSERT INTO device_tokens(id,token_hash,label,password_version,created_at,expires_at) VALUES (?,?,?,?,?,?)')
+    .bind(crypto.randomUUID(), await hash(token), name, await passwordVersion(env), new Date().toISOString(), now() + DEVICE_TOKEN_AGE).run();
+  // The plain token is returned once and never stored; only its hash is kept.
+  return json({ ok: true, token, label: name, expiresInDays: DEVICE_TOKEN_AGE / 86400 });
+}
+export async function revokeDeviceTokens(env: Env) {
+  await env.DB.prepare('DELETE FROM device_tokens').run();
+  return json({ ok: true });
+}
+export async function countDeviceTokens(env: Env) {
+  const row = await env.DB.prepare('SELECT COUNT(*) AS count FROM device_tokens WHERE expires_at>? AND password_version=?')
+    .bind(now(), await passwordVersion(env)).first<{ count: number }>();
+  return Number(row?.count ?? 0);
 }
 
 function oauthConfig(env: Env) {
@@ -162,6 +188,7 @@ export async function cleanup(env: Env) {
     env.DB.prepare('DELETE FROM sessions WHERE expires_at<? OR password_version<>?').bind(now(), version),
     env.DB.prepare('DELETE FROM oauth_codes WHERE expires_at<? OR password_version<>?').bind(now(), version),
     env.DB.prepare('DELETE FROM oauth_tokens WHERE refresh_expires<? OR password_version<>?').bind(now(), version),
+    env.DB.prepare('DELETE FROM device_tokens WHERE expires_at<? OR password_version<>?').bind(now(), version),
     env.DB.prepare('DELETE FROM rate_limits WHERE expires_at<?').bind(now()),
   ]);
 }

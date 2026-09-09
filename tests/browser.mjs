@@ -87,6 +87,20 @@ try {
   await page.getByText('Kupovina je obrisana.', { exact: false }).waitFor();
   assert.equal((await db.prepare('SELECT COUNT(*) AS count FROM expenses WHERE deleted_at IS NULL').first()).count, 2);
 
+  // The phone shortcut: the code is shown once, counted, and revocable from the app.
+  await page.getByRole('button', { name: 'Napravi prečicu' }).click();
+  await page.getByText('više se neće prikazati', { exact: false }).waitFor();
+  const shown = await page.locator('input[readonly]').inputValue();
+  assert.match(shown, /^[a-f0-9]{64}$/, 'The shortcut code is shown in full exactly once');
+  const stored = await db.prepare('SELECT token_hash FROM device_tokens').all();
+  assert.equal(stored.results.length, 1);
+  assert.notEqual(stored.results[0].token_hash, shown, 'Only the hash is stored');
+  await page.getByText('Povezanih prečica: 1', { exact: false }).waitFor();
+  await page.getByRole('button', { name: 'Opozovi prečice' }).click();
+  await page.getByRole('button', { name: 'Potvrdi opoziv prečica' }).click();
+  await page.getByText('Nijedna prečica nije povezana.', { exact: false }).waitFor();
+  assert.equal((await db.prepare('SELECT COUNT(*) AS count FROM device_tokens').first()).count, 0);
+
   await page.screenshot({ path: screenshotDir + '/desktop.png', fullPage: true });
   await phone.getByRole('button', { name: 'Osveži', exact: true }).click();
   await phone.screenshot({ path: screenshotDir + '/phone.png', fullPage: true });
@@ -112,7 +126,7 @@ try {
   await page.getByRole('button', { name: 'Otvori finansije' }).waitFor();
   await page.screenshot({ path: screenshotDir + '/login.png' });
   assert.deepEqual(errors, []);
-  console.log('Browser checks passed: login, two devices, monthly plan, add/edit/delete, empty submit, lost response/retry, import, local backup, mobile layout, dark mode, logout.');
+  console.log('Browser checks passed: login, two devices, monthly plan, add/edit/delete, empty submit, lost response/retry, import, local backup, mobile layout, dark mode, phone shortcut, logout.');
 } catch (error) {
   if (page) await page.screenshot({ path: screenshotDir + '/failure.png', fullPage: true }).catch(() => {});
   throw error;

@@ -11,8 +11,12 @@ Zato: vi napravite svoj GPT na svom nalogu, supruga svoj na svom. Isti `openapi.
 i secret, ista zajednička šifra pri povezivanju. Razgovori su odvojeni, podaci zajednički.
 
 Jedina stvarna prepreka je pretplata: pravljenje custom GPT-ja traži plaćeni ChatGPT paket, pa je za
-drugi GPT potreban i drugi plaćeni nalog. Ako to nije opcija, web aplikacija ostaje zajednička i
-potpuno funkcionalna za oboje.
+drugi GPT potreban i drugi plaćeni nalog. Besplatan ChatGPT tu ne pomaže — nema ni Actions ni custom
+konektore, pa ne postoji podešavanje u kojem upisuje u ovu bazu.
+
+**Ako drugi plaćeni nalog nije opcija, ne treba ni da bude.** [SHORTCUT.md](SHORTCUT.md) opisuje
+prečicu na iPhone-u koja unosi kupovinu jednim tapom ili glasom, bez pretplate i bez prijave, uz
+potpuno ista serverska ograničenja kao GPT. Web aplikacija ostaje zajednička i funkcionalna za oboje.
 
 Ovo povezivanje ne poziva OpenAI model API i ne zahteva OpenAI API ključ — ChatGPT poziva API vaše
 aplikacije.

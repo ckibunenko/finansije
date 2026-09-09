@@ -59,15 +59,21 @@ export async function summary(env: Env, month: string) {
     recentExpensesLimit: 20,
   });
 }
-export async function addExpense(request: Request, env: Env, source: 'web' | 'gpt') {
+export async function addExpense(request: Request, env: Env, source: Expense['source']) {
   const input = await body(request);
-  if (!validId(input.requestId)) throw new HttpError(400, 'Potreban je jedinstven requestId (UUID). Ponovljeni pokušaj mora koristiti isti requestId.');
-  if (!validDate(input.date)) throw new HttpError(400, 'Unesite ispravan datum YYYY-MM-DD.');
+  // The phone shortcut cannot mint a UUID or resolve the Belgrade date, and iOS never repeats a
+  // request on its own, so the server fills both in for that caller. The web app and the GPT both
+  // retry, so for them the identifier and the date stay required and the guarantee is unchanged.
+  const lenient = source === 'shortcut';
+  const requestId = input.requestId ?? (lenient ? 'sc-' + crypto.randomUUID() : undefined);
+  const date = input.date ?? (lenient ? belgradeToday() : undefined);
+  if (!validId(requestId)) throw new HttpError(400, 'Potreban je jedinstven requestId (UUID). Ponovljeni pokušaj mora koristiti isti requestId.');
+  if (!validDate(date)) throw new HttpError(400, 'Unesite ispravan datum YYYY-MM-DD.');
   const minor = amount(input.amount), note = description(input.description);
-  const payload = JSON.stringify({ date: input.date, amount: minor, description: note, source });
+  const payload = JSON.stringify({ date, amount: minor, description: note, source });
   const inserted = await env.DB.prepare('INSERT INTO expenses(id,date,amount,description,source,created_at,original_payload) VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING RETURNING *')
-    .bind(input.requestId, input.date, minor, note, source, new Date().toISOString(), payload).first<ExpenseRow>();
-  const stored = inserted ?? await env.DB.prepare('SELECT * FROM expenses WHERE id=?').bind(input.requestId).first<ExpenseRow>();
+    .bind(requestId, date, minor, note, source, new Date().toISOString(), payload).first<ExpenseRow>();
+  const stored = inserted ?? await env.DB.prepare('SELECT * FROM expenses WHERE id=?').bind(requestId).first<ExpenseRow>();
   if (!stored || stored.original_payload !== payload) throw new HttpError(409, 'Ovaj requestId već pripada drugom unosu.');
   // A retried creation must never resurrect a deleted or edited purchase.
   return json({ expense: expense(stored), duplicate: !inserted, deleted: !!stored.deleted_at }, inserted ? 201 : 200);
@@ -115,7 +121,7 @@ export function parseBackup(input: unknown) {
     const seen = new Set<string>();
     expenses = input.expenses.map((raw: unknown) => {
       if (!isRecord(raw) || !validId(raw.id) || seen.has(raw.id) || !validDate(raw.date) || !map[raw.date.slice(0, 7)] ||
-          !['web', 'gpt', 'import'].includes(String(raw.source)) || typeof raw.createdAt !== 'string' || !Number.isFinite(Date.parse(raw.createdAt))) throw new Error('Rezervna kopija sadrži neispravnu ili ponovljenu kupovinu.');
+          !['web', 'gpt', 'import', 'shortcut', 'viber'].includes(String(raw.source)) || typeof raw.createdAt !== 'string' || !Number.isFinite(Date.parse(raw.createdAt))) throw new Error('Rezervna kopija sadrži neispravnu ili ponovljenu kupovinu.');
       seen.add(raw.id);
       return { id: raw.id, date: raw.date, amount: toMinor(raw.amount), description: description(raw.description), source: raw.source as Expense['source'], created_at: new Date(raw.createdAt).toISOString() };
     });

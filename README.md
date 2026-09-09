@@ -1,144 +1,52 @@
-# Store Finance Tracker
+# Naše finansije
 
-A web app for tracking a store's monthly budget. It helps you enter daily
-expenses, compare spending against the planned budget, track a monthly savings
-goal, review charts, and import/export data as a JSON file.
+Privatna zajednička evidencija troškova za jedno domaćinstvo. Postojeći React pregled, grafikoni i svetla/tamna tema ostaju; podaci se čuvaju na serveru u Cloudflare D1 bazi. GPT Actions koristi isti API i bazu, bez OpenAI API ključa.
 
-## Requirements
+## Šta je promenjeno
 
-Before you start, make sure you have:
+- Zajednička šifra, serverske sesije od 30 dana i odjava. Šifra se ne ugrađuje u JavaScript.
+- Svaki unos dodaje **jednu kupovinu**. Dnevni zbir se računa iz kupovina. `+1400` i `1400` oba dodaju 1.400 dinara; izmena postojećeg iznosa radi se preko „Izmeni“.
+- Prazno polje ne briše podatke. Nula označava dan bez potrošnje, a dan bez unosa ostaje prazan.
+- Server sabira novac u parama. Istovremene kupovine se ne prepisuju. Isti `requestId` ne može dva puta upisati kupovinu.
+- Izmene kupovina i mesečnog plana proveravaju verziju i prijavljuju konflikt ako je drugi uređaj u međuvremenu menjao podatke.
+- Pregled se osvežava na 20 sekundi dok je stranica vidljiva, po povratku u aplikaciju i dugmetom Osveži. Nacrti ostaju pri neuspelom čuvanju dok je stranica otvorena.
+- Uvoz stare evidencije ili nove rezervne kopije ide preko pregleda i potvrde **samo u praznu bazu**. Nema automatskog spajanja ili prepisivanja. Stari localStorage ostaje netaknut.
+- Izvoz JSON sadrži pojedinačne kupovine i mesečne podatke (format `finansije-v2`). Stari format je podržan za uvoz.
+- GPT može da čita mesečni pregled i dodaje kupovine; ne može da menja plan, briše, izvozi sve podatke ili pokrene uvoz. Web dugme opoziva sve GPT pristupe.
+- **Prečica na telefonu** radi bez ikakve pretplate: kod se pravi u aplikaciji, prikazuje se jednom i čuva se samo kao heš. Ima tačno ista ograničenja kao GPT — dodavanje kupovine i mesečni pregled, ništa više. Važi 365 dana i opoziva se jednim dugmetom. Uputstvo je u [SHORTCUT.md](SHORTCUT.md).
 
-- Git
-- Node.js 20 or newer
-- npm
+## Lokalno pokretanje
 
-Check your installed versions:
+Potrebni su Node.js 22.18+ (ili noviji podržan LTS) i npm. Produkcioni hosting ne koristi lokalni disk ovog računara.
 
-```bash
-node -v
-npm -v
-git --version
-```
-
-If Node.js is not installed, use Node.js 20 LTS or a newer version.
-
-## Download The Project
-
-Clone the repository:
-
-```bash
-git clone https://github.com/ckibunenko/finansije.git
-```
-
-Open the project folder:
-
-```bash
-cd finansije
-```
-
-## Install Dependencies
-
-Install the project dependencies:
-
-```bash
-npm install
-```
-
-For a clean install that follows `package-lock.json` exactly, use:
-
-```bash
+```powershell
 npm ci
-```
-
-`npm ci` is a good choice for clean local setups and CI/CD environments.
-
-## Run The App Locally
-
-Start the development server:
-
-```bash
-npm run dev
-```
-
-The terminal will print a local URL. It is usually:
-
-```text
-http://localhost:5173/
-```
-
-Open that URL in your browser.
-
-## How To Use The App
-
-1. Select a month using the month picker or the previous/next month buttons.
-2. Enter the planned monthly budget.
-3. Optionally enter a monthly savings goal.
-4. Select the date you want to update.
-5. Enter the daily expense.
-6. Click the save button.
-
-Daily expense examples:
-
-```text
-5400
-```
-
-sets the total expense for the selected day to 5400 RSD.
-
-```text
-+1400
-```
-
-adds 1400 RSD to the existing expense for the selected day.
-
-If you leave the daily expense field empty and click the save button, the entry
-for that day is deleted.
-
-## Data Storage
-
-Data is saved locally in the browser using `localStorage`. This means:
-
-- data stays saved in the same browser on the same computer
-- data is not sent to a server
-- another browser or another computer will not automatically have the same data
-
-To move or back up data, use:
-
-- `Export JSON` to download a backup file
-- `Import JSON` to load a previously exported file
-
-## Production Build
-
-Create a production build:
-
-```bash
+npm run setup:local
+npm run db:local
 npm run build
-```
-
-Preview the production build locally:
-
-```bash
 npm run preview
 ```
 
-The terminal will print the preview URL.
+Otvorite `http://127.0.0.1:8787`. Test šifra koju postavlja `setup:local` je `lokalna-provera-finansije-123456` i namenjena je **isključivo lokalnoj proveri**. Skripta neće prepisati postojeći `.dev.vars`. Lokalna baza je u ignorisanom `.wrangler/state` direktorijumu.
 
-## Common Issues
+Za razvoj sa osvežavanjem koda pokrenite `npm run dev:api`, a u drugom terminalu `npm run dev`. Vite prosleđuje API pozive lokalnom Worker-u.
 
-If `npm install` or `npm run dev` does not work, check your Node.js version:
+## Provere
 
-```bash
-node -v
+```powershell
+npm test
+npm run build
+npm run test:browser
 ```
 
-Use Node.js 20 or newer.
+API testovi koriste stvarni Cloudflare Workerd/Miniflare i lokalni D1, sa praznom privremenom bazom. Browser testovi koriste instalirani Google Chrome u headless režimu i sopstvenu privremenu bazu; ne koriste vaše podatke ni naloge. Snimci su u `.wrangler/screenshots`.
 
-If port `5173` is already in use, Vite will offer another port. Open the URL
-printed in the terminal.
+Scenariji pokrivaju dva uređaja, novčane iznose i datume, duplirane zahteve, konflikte izmena, uvoz i izvoz, OAuth razmenu i rotaciju tokena, opoziv pristupa, CSRF, ograničavanje pokušaja prijave i izgubljen odgovor posle uspešnog upisa. Browser test obuhvata mobilni prikaz, tamnu temu i uvoz bez brisanja starog localStorage-a.
 
-If you want a completely fresh dependency install, delete your local
-`node_modules` folder and run:
+## Objavljivanje i ChatGPT
 
-```bash
-npm install
-```
+Pratite [DEPLOYMENT.md](DEPLOYMENT.md). Za GPT konfiguraciju upotrebite [GPT_SETUP.md](GPT_SETUP.md) i [GPT_INSTRUCTIONS.md](GPT_INSTRUCTIONS.md). Za unos sa telefona bez pretplate — [SHORTCUT.md](SHORTCUT.md).
+
+Cloudflare Workers Free + D1 Free su ciljna konfiguracija. Nema plaćenog AI API-ja, plaćenog domena, R2, niti automatskog prelaska na plaćeni plan. Besplatni limiti i ponuda provajdera mogu se menjati; pre objave proveriti stanje naloga. Ako se limit dostigne, UI treba da prikaže grešku, a ne lažnu potvrdu čuvanja.
+
+Ovo je jedan zajednički prostor sa jednom šifrom. Oznaka „web/GPT/prečica“ opisuje izvor unosa, ne identitet osobe. Prava imena, dva odvojena naloga, čuvanje računa/fotografija i automatski offline red nisu uključeni. Podaci se ne keširaju u service worker-u.

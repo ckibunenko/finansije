@@ -1,7 +1,7 @@
-import { authenticate, authorize, cleanup, login, logout, token } from './auth.ts';
+import { authenticate, authorize, cleanup, countDeviceTokens, createDeviceToken, login, logout, revokeDeviceTokens, token } from './auth.ts';
 import { addExpense, editExpense, getState, importBackup, summary, updateMonth } from './data.ts';
 import { belgradeToday } from '../shared/budget.ts';
-import { HttpError, json, secure } from './http.ts';
+import { body, HttpError, json, secure } from './http.ts';
 import type { Env } from './http.ts';
 import { openApi } from './openapi.ts';
 
@@ -17,16 +17,20 @@ async function route(request: Request, env: Env): Promise<Response> {
     const caller = await authenticate(request, env);
     if (method === 'GET' && path === '/api/summary') return summary(env, url.searchParams.get('month') ?? belgradeToday().slice(0, 7));
     if (method === 'POST' && path === '/api/expenses') return addExpense(request, env, caller);
-    // The GPT token cannot change plans, export all history, restore, edit, or delete.
+    // Neither the GPT token nor the phone shortcut can change plans, export all history,
+    // restore, edit, or delete. Everything below this line is web-session only.
     if (caller !== 'web') throw new HttpError(403, 'Ova radnja je dostupna samo u web aplikaciji.');
     if (method === 'GET' && path === '/api/state') {
       const since = url.searchParams.get('since');
       if (since && /^\d+$/.test(since)) {
         const revision = await env.DB.prepare('SELECT version FROM state_revision WHERE id=1').first<{ version: number }>();
-        if (revision && revision.version === Number(since)) return json({ unchanged: true, today: belgradeToday() });
+        // The shortcut count lives outside state_revision, so it rides along on every reply.
+        if (revision && revision.version === Number(since)) return json({ unchanged: true, today: belgradeToday(), devices: await countDeviceTokens(env) });
       }
-      return json(await getState(env));
+      return json({ ...await getState(env), devices: await countDeviceTokens(env) });
     }
+    if (method === 'POST' && path === '/api/devices') return createDeviceToken(env, (await body(request)).label);
+    if (method === 'DELETE' && path === '/api/devices') return revokeDeviceTokens(env);
     if (method === 'GET' && path === '/api/export') {
       const state = await getState(env);
       return json({ format: 'finansije-v2', exportedAt: new Date().toISOString(), ...state }, 200, {

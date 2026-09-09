@@ -7,9 +7,11 @@ export type MonthBudget = {
 export type MonthBudgetMap = Record<string, MonthBudget>;
 export type Expense = {
   id: string; date: string; amount: number; description: string;
-  source: 'web' | 'gpt' | 'import'; version: number; createdAt: string;
+  source: 'web' | 'gpt' | 'import' | 'shortcut' | 'viber'; version: number; createdAt: string;
 };
-export type BudgetState = { budgetMap: MonthBudgetMap; expenses: Expense[]; today: string; revision: number };
+// `devices` counts the connected phone shortcuts. It is served with the state but is
+// never part of an export, so a backup stays purely financial.
+export type BudgetState = { budgetMap: MonthBudgetMap; expenses: Expense[]; today: string; revision: number; devices?: number };
 
 export const MAX_AMOUNT = 100_000_000;
 export const isRecord = (value: unknown): value is Record<string, unknown> =>

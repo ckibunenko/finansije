@@ -52,7 +52,7 @@ before(async () => {
   await db.batch(statements.map((sql) => db.prepare(sql)));
 });
 beforeEach(async () => {
-  await db.batch(['months', 'expenses', 'sessions', 'oauth_codes', 'oauth_tokens', 'rate_limits', 'imports'].map((table) => db.prepare(`DELETE FROM ${table}`)));
+  await db.batch(['months', 'expenses', 'sessions', 'oauth_codes', 'oauth_tokens', 'device_tokens', 'rate_limits', 'imports'].map((table) => db.prepare(`DELETE FROM ${table}`)));
 });
 after(async () => { await mf?.dispose(); });
 
@@ -194,4 +194,92 @@ test('unchanged polling reads only the revision and a mutation advances it', asy
   await request('/api/expenses', 'POST', purchase(), cookie);
   const changed = await (await request('/api/state?since=' + state.revision, 'GET', undefined, cookie)).json() as any;
   assert.ok(changed.revision > state.revision); assert.equal(changed.expenses.length, 1);
+});
+
+const passwordVersion = createHash('sha256').update(passwordHash).digest('hex');
+async function deviceToken(cookie: string) {
+  const response = await request('/api/devices', 'POST', { label: 'Telefon' }, cookie);
+  assert.equal(response.status, 200);
+  const created = await response.json() as { token: string; label: string };
+  assert.match(created.token, /^[a-f0-9]{64}$/);
+  return created.token;
+}
+test('the phone shortcut adds purchases and reads the summary, and nothing else', async () => {
+  const cookie = await login();
+  const headers = { Authorization: 'Bearer ' + await deviceToken(cookie) };
+  const payload = { ...purchase(1200), description: 'Pijaca' };
+  assert.equal((await request('/api/expenses', 'POST', payload, '', headers)).status, 201);
+  assert.equal((await request('/api/summary?month=2026-09', 'GET', undefined, '', headers)).status, 200);
+  for (const [path, method, data] of [['/api/state', 'GET', undefined], ['/api/export', 'GET', undefined],
+    ['/api/import', 'POST', {}], ['/api/devices', 'POST', {}], ['/api/months/2026-09', 'PUT', {}],
+    [`/api/expenses/${payload.requestId}`, 'PATCH', { version: 1 }], [`/api/expenses/${payload.requestId}`, 'DELETE', { version: 1 }]] as const) {
+    assert.equal((await request(path, method, data, '', headers)).status, 403, `${method} ${path}`);
+  }
+  const state = await (await request('/api/state', 'GET', undefined, cookie)).json() as any;
+  assert.equal(state.expenses[0].source, 'shortcut');
+  assert.equal(state.devices, 1);
+});
+test('shortcut tokens are counted, revoked in one go, and never handed out twice', async () => {
+  const cookie = await login();
+  const first = await deviceToken(cookie), second = await deviceToken(cookie);
+  assert.notEqual(first, second);
+  const counted = await (await request('/api/state', 'GET', undefined, cookie)).json() as any;
+  assert.equal(counted.devices, 2);
+  // Only the hash is kept, so the plain token exists nowhere in the database.
+  const stored = await db.prepare('SELECT token_hash FROM device_tokens').all();
+  assert.equal(stored.results.length, 2);
+  assert.ok(!stored.results.some((row: any) => [first, second].includes(row.token_hash)));
+  assert.equal((await request('/api/devices', 'DELETE', {}, cookie)).status, 200);
+  for (const token of [first, second]) assert.equal((await request('/api/summary', 'GET', undefined, '', { Authorization: 'Bearer ' + token })).status, 401);
+  const after = await (await request('/api/state', 'GET', undefined, cookie)).json() as any;
+  assert.equal(after.devices, 0);
+});
+test('expired shortcut tokens and tokens from a rotated password are refused', async () => {
+  const cookie = await login();
+  const expired = 'a'.repeat(64), rotated = 'b'.repeat(64);
+  const now = Math.floor(Date.now() / 1000);
+  await db.batch([
+    db.prepare('INSERT INTO device_tokens VALUES (?,?,?,?,?,?)').bind('expired', createHash('sha256').update(expired).digest('hex'), 'Telefon', passwordVersion, new Date().toISOString(), now - 1),
+    db.prepare('INSERT INTO device_tokens VALUES (?,?,?,?,?,?)').bind('rotated', createHash('sha256').update(rotated).digest('hex'), 'Telefon', 'stara-sifra', new Date().toISOString(), now + 86400),
+  ]);
+  for (const token of [expired, rotated]) assert.equal((await request('/api/summary', 'GET', undefined, '', { Authorization: 'Bearer ' + token })).status, 401);
+  const state = await (await request('/api/state', 'GET', undefined, cookie)).json() as any;
+  assert.equal(state.devices, 0);
+});
+test('unauthenticated callers cannot mint a shortcut token', async () => {
+  assert.equal((await request('/api/devices', 'POST', {})).status, 401);
+  assert.equal((await request('/api/devices', 'DELETE', {})).status, 401);
+  const cookie = await login();
+  assert.equal((await request('/api/devices', 'POST', {}, cookie, { Origin: 'https://evil.test' })).status, 403);
+});
+test('the widened source column still rejects values the app never writes', async () => {
+  await assert.rejects(db.prepare('INSERT INTO expenses(id,date,amount,description,source,created_at,original_payload) VALUES (?,?,?,?,?,?,?)')
+    .bind('x'.repeat(20), '2026-09-08', 100, '', 'izmisljeno', new Date().toISOString(), '{}').run());
+  for (const source of ['web', 'gpt', 'import', 'shortcut', 'viber']) {
+    await db.prepare('INSERT INTO expenses(id,date,amount,description,source,created_at,original_payload) VALUES (?,?,?,?,?,?,?)')
+      .bind(source + '-'.repeat(15), '2026-09-08', 100, '', source, new Date().toISOString(), '{}').run();
+  }
+});
+
+test('the shortcut may omit requestId and date; web and GPT may not', async () => {
+  const cookie = await login();
+  const headers = { Authorization: 'Bearer ' + await deviceToken(cookie) };
+  const bare = await request('/api/expenses', 'POST', { amount: 450, description: 'Pijaca' }, '', headers);
+  assert.equal(bare.status, 201);
+  const created = await bare.json() as any;
+  assert.match(created.expense.id, /^sc-[0-9a-f-]{36}$/);
+  assert.equal(created.expense.date, new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Belgrade' }));
+  assert.equal(created.expense.amount, 450);
+  // Two taps are two purchases: the shortcut cannot retry, so each call is a fresh identifier.
+  const again = await request('/api/expenses', 'POST', { amount: 450, description: 'Pijaca' }, '', headers);
+  assert.equal(again.status, 201);
+  assert.notEqual((await again.json() as any).expense.id, created.expense.id);
+  // The strict contract is unchanged for the callers that do retry.
+  assert.equal((await request('/api/expenses', 'POST', { amount: 450 }, cookie)).status, 400);
+  const gpt = { Authorization: 'Bearer ' + (await oauthToken()).access_token };
+  assert.equal((await request('/api/expenses', 'POST', { amount: 450 }, '', gpt)).status, 400);
+  // An explicit requestId and date still win when the shortcut sends them.
+  const explicit = { requestId: 'sc-20260908120000-111222', date: '2026-09-08', amount: 100, description: '' };
+  assert.equal((await request('/api/expenses', 'POST', explicit, '', headers)).status, 201);
+  assert.equal((await request('/api/expenses', 'POST', explicit, '', headers)).status, 200);
 });
